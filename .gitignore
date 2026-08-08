@@ -13,6 +13,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 **/.venv/
+.python/
 .pdf_tools/
 .ipynb_checkpoints/
 
