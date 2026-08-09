@@ -14,8 +14,8 @@ dataset audit
 ```
 
 Dataset files, checkpoints, virtual environments, and generated artifacts are
-excluded from Git. Retrieval, ASR, OCR, and multimodal fusion are intentionally
-kept outside this milestone while they are being evaluated.
+excluded from Git. ASR/transcript extraction is now available as a separate
+offline stage. OCR and multimodal retrieval remain separate stages.
 
 ## Runtime environments
 
@@ -67,3 +67,5 @@ workspace/     # shots, samples, embeddings, keyframes, reports; ignored
 
 See `PIPELINE_AIC2026.md` for the larger experimental roadmap.
 
+See `ASR_PIPELINE.md` for transcript extraction, provider fallback, alignment,
+resumption, and SQLite FTS5 indexing.

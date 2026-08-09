@@ -42,7 +42,6 @@ models/
 *.npy
 
 # Stages after BEiT-3 keyframe selection are intentionally not in the first milestone
-environments/asr/
 environments/siglip2/
 aic_pipeline/siglip_retrieval.py
 aic_pipeline/text_embeddings.py
