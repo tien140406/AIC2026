@@ -40,6 +40,11 @@ uv run --project environments\omnishotcut python scripts\build_sampling_manifest
 uv run --project environments\beit3-timm python scripts\extract_timm_beit3_embeddings.py `
   --video-id L21_V001 --batch-size 32
 
+uv run --project environments\beit3-timm python scripts\openclip_embeddings.py `
+  --video-id L21_V001 `
+  --keyframe-encoder-id timm_beit3_base_patch16_224_pt `
+  --batch-size 32
+
 uv run --project environments\beit3-timm python scripts\select_keyframes.py `
   --video-id L21_V001 `
   --encoder-id timm_beit3_base_patch16_224_pt `
@@ -54,8 +59,12 @@ uv run --project environments\beit3-timm python scripts\select_keyframes.py `
 ## Pluggable encoders
 
 Clustering consumes a Parquet feature manifest identified by `--encoder-id`.
-Another visual model can be added by producing the same metadata and embedding
-columns, without changing `aic_pipeline/keyframe_selection.py`.
+The included OpenCLIP baseline uses `ViT-B-16/laion2b_s34b_b88k`, stores its
+weights under `models/openclip/`, and embeds the selected keyframes by default
+for image-text retrieval. Pass `--sampling` only when intentionally building a
+dense frame index. Another visual model can be added by producing the same
+metadata and embedding columns, without changing
+`aic_pipeline/keyframe_selection.py`.
 
 ## Local directory layout
 
@@ -66,4 +75,3 @@ workspace/     # shots, samples, embeddings, keyframes, reports; ignored
 ```
 
 See `PIPELINE_AIC2026.md` for the larger experimental roadmap.
-
