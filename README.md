@@ -75,3 +75,41 @@ workspace/     # shots, samples, embeddings, keyframes, reports; ignored
 ```
 
 See `PIPELINE_AIC2026.md` for the larger experimental roadmap.
+
+## Gemini frame OCR pilot
+
+Export selected keyframes before calling Gemini. Pass the encoder explicitly so
+the JPG manifest matches the selected keyframe manifest.
+
+```bash
+uv run --project environments/beit3-timm \
+  python scripts/export_keyframe_jpgs.py \
+  --video-id L21_V001 \
+  --encoder-id timm_beit3_base_patch16_224_pt \
+  --max-images 200
+
+uv sync --project environments/gemini
+
+uv run --project environments/gemini \
+  python scripts/extract_gemini_ocr.py \
+  --video-id L21_V001 \
+  --limit 200 \
+  --concurrency 8 \
+  --checkpoint-every 1000
+```
+
+The OCR runner sends original frame images rather than contact sheets, validates
+structured JSON, hashes images in parallel, and keeps only `--concurrency`
+requests in flight. The Google SDK's nested retries are disabled so the runner
+can distinguish temporary rate limits from a daily quota exhaustion. Temporary
+limits use the server retry delay; a daily quota exhaustion stops new work and
+flushes all completed raw checkpoints immediately.
+
+Successful and failed requests are written atomically per frame under
+`workspace/ocr/`. The aggregate `frames.parquet`, `failures.parquet`, and report
+are refreshed every `--checkpoint-every` processed frames (1,000 by default)
+and once more on completion, interruption, or quota exhaustion. Re-running the
+same command skips successes whose image hash, model, and prompt version match.
+
+Exit codes are `0` for success, `2` for completed work with frame failures, `3`
+for terminal quota exhaustion, and `130` for an operator interruption.
