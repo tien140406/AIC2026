@@ -114,19 +114,33 @@ uv run --project environments/gemini \
   python scripts/extract_gemini_ocr.py \
   --video-id L21_V001 \
   --limit 200 \
+  --batch-size 6 \
   --concurrency 8 \
   --checkpoint-every 1000
 ```
 
-The OCR runner sends original frame images rather than contact sheets, validates
-structured JSON, hashes images in parallel, and keeps only `--concurrency`
-requests in flight. The Google SDK's nested retries are disabled so the runner
-can distinguish temporary rate limits from a daily quota exhaustion. Temporary
-limits use the server retry delay; a daily quota exhaustion stops new work and
-flushes all completed raw checkpoints immediately.
+Before Gemini, the OCR runner creates an in-memory resized screening copy and
+runs the PP-OCRv5 mobile text detector. Frames without detected text are
+skipped. Screening manifests are cached under `workspace/ocr/preprocess/`.
 
-Successful and failed requests are written atomically per frame under
-`workspace/ocr/`. The aggregate `frames.parquet`, `failures.parquet`, and report
+Gemini still receives the immutable original frames. Each request contains up to
+`--batch-size` images (6 by default), with an authoritative `frame_id` label
+immediately before every image. Gemini returns one structured OCR object per
+frame. `--concurrency` controls the number of batch requests in flight, so the
+example can process up to 48 images concurrently. PP-OCR boxes are passed as
+hints, while Gemini scans each full image for readable text.
+
+The runner validates exact frame-ID coverage, hashes images in parallel, and
+retries a whole batch when the API or response schema fails. The Google SDK's
+nested retries are disabled so the runner can distinguish temporary rate limits
+from a daily quota exhaustion. Temporary limits use the server retry delay; a
+daily quota exhaustion stops new work and flushes all completed raw checkpoints
+immediately.
+
+Successful and failed results are written atomically per frame under
+`workspace/ocr/`, so resume/checkpoint behavior remains frame-level even though
+requests are batched. Batch usage is tagged with one `request_id` and counted
+once in reports. The aggregate `frames.parquet`, `failures.parquet`, and report
 are refreshed every `--checkpoint-every` processed frames (1,000 by default)
 and once more on completion, interruption, or quota exhaustion. Re-running the
 same command skips successes whose image hash, model, and prompt version match.
