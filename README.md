@@ -14,14 +14,17 @@ dataset audit
 ```
 
 Dataset files, checkpoints, virtual environments, and generated artifacts are
-excluded from Git. Retrieval, ASR, OCR, and multimodal fusion are intentionally
-kept outside this milestone while they are being evaluated.
+excluded from Git. OpenCLIP retrieval embeddings, ASR extraction, and Gemini
+OCR are available as separate offline stages; multimodal fusion remains outside
+this milestone while it is being evaluated.
 
 ## Runtime environments
 
 ```powershell
 uv sync --project environments\omnishotcut
 uv sync --project environments\beit3-timm
+uv sync --project environments\asr
+uv sync --project environments\gemini
 ```
 
 OmniShotCut is pinned as a Git submodule under `third_party/OmniShotCut`.
@@ -113,3 +116,8 @@ same command skips successes whose image hash, model, and prompt version match.
 
 Exit codes are `0` for success, `2` for completed work with frame failures, `3`
 for terminal quota exhaustion, and `130` for an operator interruption.
+
+## ASR transcript extraction
+
+See `ASR_PIPELINE.md` for transcript extraction, provider fallback, alignment,
+resumption, and SQLite FTS5 indexing.
