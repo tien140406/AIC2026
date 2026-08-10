@@ -1,4 +1,4 @@
-from aic_pipeline.sampling import sample_shot
+from aic_pipeline.keyframes.sampling import sample_shot
 
 
 def test_sample_shot_uses_half_open_range_and_keeps_anchors() -> None:

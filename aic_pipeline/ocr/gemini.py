@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal
 import pandas as pd
 from pydantic import BaseModel, Field, model_validator
 
-from aic_pipeline.io import atomic_write_parquet
+from ..common.io import atomic_write_parquet
 
 PROMPT_VERSION = "gemini_frame_ocr_v2"
 Coordinate = Annotated[int, Field(ge=0, le=1000)]

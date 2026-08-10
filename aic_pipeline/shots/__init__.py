@@ -1,0 +1,1 @@
+"""Shot boundary detection integrations."""

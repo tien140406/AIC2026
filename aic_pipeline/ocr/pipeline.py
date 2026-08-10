@@ -14,9 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[2]
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -24,7 +22,7 @@ from google import genai
 from google.genai import types
 from PIL import Image, ImageOps
 
-from aic_pipeline.gemini_ocr import (
+from .gemini import (
     PROMPT_VERSION,
     FrameOcr,
     build_prompt,
@@ -35,7 +33,7 @@ from aic_pipeline.gemini_ocr import (
     success_path,
     write_summary_tables,
 )
-from aic_pipeline.io import atomic_write_json
+from ..common.io import atomic_write_json
 
 THREAD_STATE = threading.local()
 

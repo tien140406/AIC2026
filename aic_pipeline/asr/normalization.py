@@ -5,7 +5,7 @@ import unicodedata
 from collections.abc import Iterable
 from itertools import pairwise
 
-from .transcript_models import QualityResult, TranscriptSegment
+from .models import QualityResult, TranscriptSegment
 
 ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
 WHITESPACE_RE = re.compile(r"\s+")

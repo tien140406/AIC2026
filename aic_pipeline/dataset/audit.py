@@ -12,8 +12,8 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from .io import atomic_write_json, atomic_write_parquet
-from .paths import PipelinePaths
+from ..common.io import atomic_write_json, atomic_write_parquet
+from ..common.paths import PipelinePaths
 
 
 @dataclass

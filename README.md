@@ -67,7 +67,24 @@ weights under `models/openclip/`, and embeds the selected keyframes by default
 for image-text retrieval. Pass `--sampling` only when intentionally building a
 dense frame index. Another visual model can be added by producing the same
 metadata and embedding columns, without changing
-`aic_pipeline/keyframe_selection.py`.
+`aic_pipeline/keyframes/selection.py`.
+
+## Python package layout
+
+Reusable implementation is grouped by pipeline feature; files in `scripts/`
+only parse CLI arguments and dispatch to these modules.
+
+```text
+aic_pipeline/
+  common/       # paths and atomic persistence
+  dataset/      # dataset audit and manifests
+  shots/        # shot-boundary detection
+  keyframes/    # sampling, selection, and JPG export
+  embeddings/   # BEiT-3 and OpenCLIP backends
+  ocr/          # Gemini OCR schema and resumable pipeline
+  asr/          # transcript providers, alignment, and FTS index
+  objects/      # object-detection integrations
+```
 
 ## Local directory layout
 

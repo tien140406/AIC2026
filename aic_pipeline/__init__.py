@@ -1,3 +1,3 @@
-"""AIC HCMC 2026 offline preprocessing pipeline."""
+"""AIC HCMC 2026 multimodal offline preprocessing pipeline."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

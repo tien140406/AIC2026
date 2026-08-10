@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from .transcript_alignment import ShotInterval
-from .transcript_models import TranscriptSegment, frame_to_segments
+from .alignment import ShotInterval
+from .models import TranscriptSegment, frame_to_segments
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS segments (

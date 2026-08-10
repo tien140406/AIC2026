@@ -3,8 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from aic_pipeline.transcript_alignment import ShotInterval
-from aic_pipeline.transcript_index import (
+from aic_pipeline.asr.alignment import ShotInterval
+from aic_pipeline.asr.index import (
     build_transcript_index,
     expand_temporal_neighbors,
     initialize_transcript_index,
@@ -12,7 +12,7 @@ from aic_pipeline.transcript_index import (
     search_transcripts,
     upsert_transcript_segments,
 )
-from aic_pipeline.transcript_models import TranscriptSegment, segments_to_frame
+from aic_pipeline.asr.models import TranscriptSegment, segments_to_frame
 
 
 def indexed_segment() -> TranscriptSegment:

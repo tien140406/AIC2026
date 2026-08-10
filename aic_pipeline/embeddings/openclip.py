@@ -14,7 +14,7 @@ from PIL import Image
 import torch
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL_NAME = "ViT-B-16"
 DEFAULT_PRETRAINED = "laion2b_s34b_b88k"
 DEFAULT_ENCODER_ID = "openclip_vit_b16_laion2b_s34b_b88k"

@@ -10,19 +10,19 @@ from typing import Any
 
 import pandas as pd
 
-from .io import atomic_write_json, atomic_write_parquet
-from .paths import PipelinePaths
-from .transcript_alignment import (
+from ..common.io import atomic_write_json, atomic_write_parquet
+from ..common.paths import PipelinePaths
+from .alignment import (
     align_segments,
     load_keyframe_mapping,
     load_shot_intervals,
 )
-from .transcript_models import ProviderResult, segments_to_frame, utc_now_iso
-from .transcript_normalization import (
+from .models import ProviderResult, segments_to_frame, utc_now_iso
+from .normalization import (
     build_semantic_chunks,
     normalize_segments,
 )
-from .transcript_providers import (
+from .providers import (
     ExistingTranscriptProvider,
     FasterWhisperTranscriptProvider,
     TranscriptContext,

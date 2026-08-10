@@ -11,7 +11,7 @@ import numpy as np
 import torch
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CHECKPOINT = PROJECT_ROOT / "models" / "omnishotcut" / "OmniShotCut_ckpt.pth"
 LOCAL_FFMPEG_DIR = PROJECT_ROOT / "tools" / "ffmpeg"
 

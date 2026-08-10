@@ -14,7 +14,7 @@ import timm
 import torch
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODEL_ID = "hf_hub:timm/beit3_base_patch16_224.pt"
 ENCODER_ID = "timm_beit3_base_patch16_224_pt"
 

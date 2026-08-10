@@ -9,12 +9,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from aic_pipeline.paths import PipelinePaths
-from aic_pipeline.transcript_pipeline import (
+from aic_pipeline.asr.pipeline import (
     TranscriptPipeline,
     TranscriptPipelineConfig,
     select_video_ids,
 )
+from aic_pipeline.common.paths import PipelinePaths
 
 
 def parse_args() -> argparse.Namespace:

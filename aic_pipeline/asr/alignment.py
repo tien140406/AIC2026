@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .transcript_models import TranscriptSegment
+from .models import TranscriptSegment
 
 
 @dataclass(frozen=True)

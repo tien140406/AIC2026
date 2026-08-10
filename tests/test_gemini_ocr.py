@@ -8,7 +8,7 @@ from google.genai import errors
 from PIL import Image
 from pydantic import ValidationError
 
-from aic_pipeline.gemini_ocr import (
+from aic_pipeline.ocr.gemini import (
     PROMPT_VERSION,
     FrameOcr,
     classify_error,
@@ -17,7 +17,7 @@ from aic_pipeline.gemini_ocr import (
     reusable_success,
     write_summary_tables,
 )
-from scripts import extract_gemini_ocr as runner
+from aic_pipeline.ocr import pipeline as runner
 
 
 def test_frame_ocr_requires_has_text_to_match_blocks() -> None:

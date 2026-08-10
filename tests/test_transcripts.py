@@ -7,25 +7,24 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from aic_pipeline.paths import PipelinePaths
-from aic_pipeline.transcript_alignment import ShotInterval, align_segments
-from aic_pipeline.transcript_models import (
+from aic_pipeline.asr.alignment import ShotInterval, align_segments
+from aic_pipeline.asr.models import (
     ProviderResult,
     TranscriptSegment,
     frame_to_segments,
     segments_to_frame,
 )
-from aic_pipeline.transcript_normalization import (
+from aic_pipeline.asr.normalization import (
     build_semantic_chunks,
     evaluate_transcript_quality,
     normalize_segments,
     normalize_transcript_text,
 )
-from aic_pipeline.transcript_pipeline import (
+from aic_pipeline.asr.pipeline import (
     TranscriptPipeline,
     TranscriptPipelineConfig,
 )
-from aic_pipeline.transcript_providers import (
+from aic_pipeline.asr.providers import (
     ExistingTranscriptProvider,
     FasterWhisperTranscriptProvider,
     TranscriptAcquisitionError,
@@ -33,6 +32,7 @@ from aic_pipeline.transcript_providers import (
     TranscriptSourceRouter,
     YouTubeTranscriptProvider,
 )
+from aic_pipeline.common.paths import PipelinePaths
 
 
 def segment(

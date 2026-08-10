@@ -10,8 +10,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from aic_pipeline.paths import PipelinePaths
-from aic_pipeline.transcript_index import build_transcript_index, search_transcripts
+from aic_pipeline.asr.index import build_transcript_index, search_transcripts
+from aic_pipeline.common.paths import PipelinePaths
 
 
 def main() -> None:

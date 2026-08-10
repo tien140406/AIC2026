@@ -10,9 +10,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from .io import atomic_write_json
-from .transcript_models import ProviderResult, TranscriptSegment
-from .transcript_normalization import evaluate_transcript_quality
+from ..common.io import atomic_write_json
+from .models import ProviderResult, TranscriptSegment
+from .normalization import evaluate_transcript_quality
 
 
 @dataclass(frozen=True)
