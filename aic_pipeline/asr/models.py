@@ -8,12 +8,16 @@ from typing import Any
 
 import pandas as pd
 
+from ..common.identity import seconds_to_ms
+
 TRANSCRIPT_COLUMNS = [
     "segment_id",
     "video_id",
     "level",
     "start",
     "end",
+    "start_ms",
+    "end_ms",
     "language",
     "source",
     "source_type",
@@ -79,6 +83,8 @@ class TranscriptSegment:
             "level": self.level,
             "start": float(self.start),
             "end": float(self.end),
+            "start_ms": seconds_to_ms(self.start),
+            "end_ms": seconds_to_ms(self.end),
             "language": self.language,
             "source": self.source,
             "source_type": self.source_type,

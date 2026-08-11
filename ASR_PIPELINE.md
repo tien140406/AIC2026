@@ -94,6 +94,25 @@ already carry `video_id`, timestamps, shot IDs, and keyframe IDs. Use
 `expand_temporal_neighbors` for configurable neighboring shots; these retrieval
 helpers are intentionally separate from extraction.
 
+The index also materializes `segment_keyframes`, keyed by the stable
+`<video_id>:<zero-padded-frame_id>` frame UID. This avoids parsing
+`keyframe_ids_json` for reverse lookups from a visual result to its aligned ASR
+segments:
+
+```bash
+uv run --project environments/asr python scripts/query_transcript_index.py \
+  --keyframe-video-id L21_V001 --frame-id 120 --limit 10
+
+uv run --project environments/asr python scripts/query_transcript_index.py \
+  --frame-uid L21_V001:000000120 --level L0 --limit 10
+```
+
+Covering indexes support both direct `frame_uid` lookups from Milvus results and
+composite `(video_id, frame_id)` lookups from pipeline metadata. Both avoid a
+full transcript scan and use indexed lookup as the collection grows. Rebuilding
+the SQLite index also rebuilds all reverse links atomically, while the query CLI
+opens the completed index read-only and never triggers a rebuild.
+
 Dense transcript embeddings are deliberately deferred until the repository has
 a shared text-embedding/vector-index abstraction; the extraction schema is
 already suitable for adding that index without rerunning ASR.

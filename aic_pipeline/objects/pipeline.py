@@ -16,6 +16,7 @@ from typing import Any
 import pandas as pd
 from PIL import Image
 
+from ..common.identity import ensure_frame_identity, frame_uid, seconds_to_ms
 from ..common.io import atomic_write_json, atomic_write_parquet
 from .codetr import (
     DEFAULT_CHECKPOINT_NAME,
@@ -112,7 +113,7 @@ def load_jobs(
         with ThreadPoolExecutor(max_workers=hash_workers) as executor:
             hashes = list(executor.map(file_sha256, image_paths))
     jobs["image_sha256"] = hashes
-    return jobs
+    return ensure_frame_identity(jobs)
 
 
 def _read_image_size(path: Path) -> tuple[int, int]:
@@ -184,9 +185,16 @@ def failure_payload(
     return {
         "schema_version": SCHEMA_VERSION,
         "video_id": row["video_id"],
+        "frame_uid": row.get("frame_uid")
+        or frame_uid(row["video_id"], int(row["frame_id"])),
         "shot_id": int(row["shot_id"]) if pd.notna(row.get("shot_id")) else None,
         "frame_id": int(row["frame_id"]),
         "pts_time": float(row["pts_time"]) if pd.notna(row.get("pts_time")) else None,
+        "pts_ms": (
+            int(row["pts_ms"])
+            if pd.notna(row.get("pts_ms"))
+            else seconds_to_ms(row.get("pts_time"))
+        ),
         "image_path": str(row["image_path"]),
         "image_sha256": row["image_sha256"],
         "model_id": model_id,
@@ -220,9 +228,11 @@ def write_failure_table(
     columns = [
         "schema_version",
         "video_id",
+        "frame_uid",
         "shot_id",
         "frame_id",
         "pts_time",
+        "pts_ms",
         "image_path",
         "image_sha256",
         "model_id",
@@ -427,6 +437,8 @@ def run_pipeline(
                 payload = {
                     "schema_version": SCHEMA_VERSION,
                     "video_id": row["video_id"],
+                    "frame_uid": row.get("frame_uid")
+                    or frame_uid(row["video_id"], frame_id),
                     "shot_id": int(row["shot_id"])
                     if pd.notna(row.get("shot_id"))
                     else None,
@@ -434,6 +446,11 @@ def run_pipeline(
                     "pts_time": float(row["pts_time"])
                     if pd.notna(row.get("pts_time"))
                     else None,
+                    "pts_ms": (
+                        int(row["pts_ms"])
+                        if pd.notna(row.get("pts_ms"))
+                        else seconds_to_ms(row.get("pts_time"))
+                    ),
                     "image_path": str(row["image_path"]),
                     "image_sha256": row["image_sha256"],
                     "image_width": width,

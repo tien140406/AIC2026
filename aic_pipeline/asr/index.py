@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ..common.identity import frame_uid as keyframe_uid
 from .alignment import ShotInterval
 from .models import TranscriptSegment, frame_to_segments
 
@@ -36,6 +37,18 @@ CREATE INDEX IF NOT EXISTS idx_segments_video_time
     ON segments(video_id, start, end);
 CREATE INDEX IF NOT EXISTS idx_segments_primary_shot
     ON segments(video_id, primary_shot);
+CREATE TABLE IF NOT EXISTS segment_keyframes (
+    segment_id TEXT NOT NULL,
+    frame_uid TEXT NOT NULL,
+    video_id TEXT NOT NULL,
+    frame_id INTEGER NOT NULL,
+    PRIMARY KEY (segment_id, frame_uid),
+    FOREIGN KEY (segment_id) REFERENCES segments(segment_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_segment_keyframes_lookup
+    ON segment_keyframes(video_id, frame_id, segment_id);
+CREATE INDEX IF NOT EXISTS idx_segment_keyframes_uid
+    ON segment_keyframes(frame_uid, segment_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
     segment_id UNINDEXED,
     video_id UNINDEXED,
@@ -45,6 +58,57 @@ CREATE VIRTUAL TABLE IF NOT EXISTS segments_fts USING fts5(
     tokenize = 'unicode61 remove_diacritics 2'
 );
 """
+
+
+def _replace_keyframe_links(
+    connection: sqlite3.Connection,
+    *,
+    segment_id: str,
+    video_id: str,
+    frame_ids: Iterable[int],
+) -> int:
+    video_id = str(video_id).strip()
+    if not video_id:
+        raise ValueError("video_id must not be empty")
+    connection.execute(
+        "DELETE FROM segment_keyframes WHERE segment_id = ?", (segment_id,)
+    )
+    unique_frame_ids = sorted({int(frame_id) for frame_id in frame_ids})
+    rows = [
+        (segment_id, keyframe_uid(video_id, frame_id), video_id, frame_id)
+        for frame_id in unique_frame_ids
+    ]
+    connection.executemany(
+        """
+        INSERT INTO segment_keyframes(segment_id, frame_uid, video_id, frame_id)
+        VALUES (?, ?, ?, ?)
+        """,
+        rows,
+    )
+    return len(rows)
+
+
+def _backfill_keyframe_links(connection: sqlite3.Connection) -> int:
+    rows = connection.execute(
+        """
+        SELECT segments.segment_id, segments.video_id, segments.keyframe_ids_json
+        FROM segments
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM segment_keyframes
+            WHERE segment_keyframes.segment_id = segments.segment_id
+        )
+        """
+    ).fetchall()
+    inserted = 0
+    for segment_id, video_id, encoded_ids in rows:
+        inserted += _replace_keyframe_links(
+            connection,
+            segment_id=str(segment_id),
+            video_id=str(video_id),
+            frame_ids=json.loads(encoded_ids),
+        )
+    return inserted
 
 
 def _insert_record(connection: sqlite3.Connection, segment: TranscriptSegment) -> None:
@@ -78,6 +142,12 @@ def _insert_record(connection: sqlite3.Connection, segment: TranscriptSegment) -
             record["metadata_json"],
         ),
     )
+    _replace_keyframe_links(
+        connection,
+        segment_id=segment.segment_id,
+        video_id=segment.video_id,
+        frame_ids=segment.keyframe_ids,
+    )
     connection.execute(
         "DELETE FROM segments_fts WHERE segment_id = ?",
         (record["segment_id"],),
@@ -97,6 +167,7 @@ def _insert_record(connection: sqlite3.Connection, segment: TranscriptSegment) -
 
 def initialize_transcript_index(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA)
+    _backfill_keyframe_links(connection)
     connection.commit()
 
 
@@ -116,6 +187,9 @@ def upsert_transcript_segments(
                     (replace_video,),
                 )
             ]
+            connection.execute(
+                "DELETE FROM segment_keyframes WHERE video_id = ?", (replace_video,)
+            )
             connection.execute(
                 "DELETE FROM segments WHERE video_id = ?", (replace_video,)
             )
@@ -183,6 +257,79 @@ def search_transcripts(
     ]
 
 
+def find_transcript_segments_by_frame_uid(
+    connection: sqlite3.Connection,
+    frame_uid: str,
+    *,
+    limit: int = 20,
+    level: str | None = None,
+) -> list[dict[str, object]]:
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+    frame_uid = str(frame_uid).strip()
+    if not frame_uid:
+        raise ValueError("frame_uid must not be empty")
+    clauses = ["links.frame_uid = ?"]
+    parameters: list[object] = [frame_uid]
+    if level is not None:
+        if level not in {"L0", "L1"}:
+            raise ValueError("level must be L0 or L1")
+        clauses.append("segments.level = ?")
+        parameters.append(level)
+    parameters.append(limit)
+    rows = connection.execute(
+        f"""
+        SELECT segments.segment_id, segments.video_id, segments.level,
+               segments.start, segments.end, segments.clean_text, segments.raw_text,
+               segments.language, segments.primary_shot, segments.shot_ids_json,
+               segments.keyframe_ids_json, segments.provider, segments.model,
+               links.frame_uid, links.frame_id
+        FROM segment_keyframes AS links
+        JOIN segments ON segments.segment_id = links.segment_id
+        WHERE {" AND ".join(clauses)}
+        ORDER BY segments.start, segments.end, segments.level, segments.segment_id
+        LIMIT ?
+        """,
+        parameters,
+    ).fetchall()
+    return [
+        {
+            "segment_id": row[0],
+            "video_id": row[1],
+            "level": row[2],
+            "start": row[3],
+            "end": row[4],
+            "clean_text": row[5],
+            "raw_text": row[6],
+            "language": row[7],
+            "primary_shot": row[8],
+            "shot_ids": json.loads(row[9]),
+            "keyframe_ids": json.loads(row[10]),
+            "provider": row[11],
+            "model": row[12],
+            "frame_uid": row[13],
+            "frame_id": row[14],
+        }
+        for row in rows
+    ]
+
+
+def find_transcript_segments_by_keyframe(
+    connection: sqlite3.Connection,
+    video_id: str,
+    frame_id: int,
+    *,
+    limit: int = 20,
+    level: str | None = None,
+) -> list[dict[str, object]]:
+    return find_transcript_segments_by_frame_uid(
+        connection,
+        keyframe_uid(video_id, frame_id),
+        limit=limit,
+        level=level,
+    )
+
+
 def build_transcript_index(
     transcript_root: Path,
     destination: Path,
@@ -216,6 +363,9 @@ def build_transcript_index(
                 video_count += 1
                 segment_count += len(segments)
         connection.execute("INSERT INTO segments_fts(segments_fts) VALUES('optimize')")
+        keyframe_link_count = int(
+            connection.execute("SELECT COUNT(*) FROM segment_keyframes").fetchone()[0]
+        )
         connection.commit()
     finally:
         connection.close()
@@ -225,6 +375,7 @@ def build_transcript_index(
         "transcript_root": str(transcript_root),
         "videos": video_count,
         "segments": segment_count,
+        "keyframe_links": keyframe_link_count,
         "levels": list(include_levels),
     }
 

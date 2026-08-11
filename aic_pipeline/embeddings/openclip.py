@@ -3,16 +3,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
 import open_clip
 import pandas as pd
-from PIL import Image
 import torch
+from PIL import Image
 
+from ..common.identity import ensure_frame_identity
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL_NAME = "ViT-B-16"
@@ -22,7 +23,9 @@ DEFAULT_KEYFRAME_ENCODER_ID = "timm_beit3_base_patch16_224_pt"
 
 
 def find_video(video_id: str) -> Path:
-    videos = pd.read_parquet(PROJECT_ROOT / "workspace" / "manifests" / "videos.parquet")
+    videos = pd.read_parquet(
+        PROJECT_ROOT / "workspace" / "manifests" / "videos.parquet"
+    )
     match = videos.loc[videos["video_id"] == video_id]
     if len(match) != 1:
         raise ValueError(f"Expected one video row for {video_id}, got {len(match)}")
@@ -35,7 +38,10 @@ def encode(
     device: torch.device,
 ) -> np.ndarray:
     batch = torch.stack(images).to(device, non_blocking=True)
-    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.float16):
+    with (
+        torch.inference_mode(),
+        torch.autocast(device_type="cuda", dtype=torch.float16),
+    ):
         features = model.encode_image(batch, normalize=True)
     return features.float().cpu().numpy()
 
@@ -98,7 +104,8 @@ def main() -> None:
             / args.keyframe_encoder_id
             / f"{args.video_id}.parquet"
         )
-    frames = pd.read_parquet(source_path).sort_values("frame_id").reset_index(drop=True)
+    frames = ensure_frame_identity(pd.read_parquet(source_path))
+    frames = frames.sort_values("frame_id").reset_index(drop=True)
     if args.max_frames is not None:
         if args.max_frames <= 0:
             raise ValueError("max frames must be positive")
@@ -148,7 +155,9 @@ def main() -> None:
         nonlocal extracted
         if not images:
             return
-        matrix[np.asarray(rows, dtype=np.int64)] = encode(images, model, device).astype(np.float16)
+        matrix[np.asarray(rows, dtype=np.int64)] = encode(images, model, device).astype(
+            np.float16
+        )
         extracted += len(images)
         images.clear()
         rows.clear()
@@ -195,7 +204,9 @@ def main() -> None:
     os.replace(temporary_mapping, mapping_path)
 
     persisted = np.load(matrix_path, mmap_mode="r")
-    check_idx = np.linspace(0, len(persisted) - 1, min(2000, len(persisted)), dtype=np.int64)
+    check_idx = np.linspace(
+        0, len(persisted) - 1, min(2000, len(persisted)), dtype=np.int64
+    )
     norms = np.linalg.norm(np.asarray(persisted[check_idx], dtype=np.float32), axis=1)
     elapsed = time.time() - started
     report = {
@@ -218,9 +229,16 @@ def main() -> None:
         "sample_fps": round(len(frames) / elapsed, 3),
         "outputs": {"embeddings": str(matrix_path), "mapping": str(mapping_path)},
     }
-    report_path = PROJECT_ROOT / "workspace" / "reports" / f"openclip_{args.video_id}{suffix}.json"
+    report_path = (
+        PROJECT_ROOT
+        / "workspace"
+        / "reports"
+        / f"openclip_{args.video_id}{suffix}.json"
+    )
     temporary_report = report_path.with_suffix(".json.tmp")
-    temporary_report.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary_report.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     os.replace(temporary_report, report_path)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 

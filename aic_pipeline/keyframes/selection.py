@@ -3,12 +3,12 @@ from __future__ import annotations
 import math
 import time
 from collections import Counter
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from ..common.identity import ensure_frame_identity
 from ..common.io import atomic_write_json, atomic_write_parquet
 from ..common.paths import PipelinePaths
 
@@ -77,7 +77,11 @@ def _sampled_silhouette(
             if own_count > 1
             else 0.0
         )
-        b = min(float(distances[row, labels == other].mean()) for other in unique if other != own)
+        b = min(
+            float(distances[row, labels == other].mean())
+            for other in unique
+            if other != own
+        )
         denominator = max(a, b)
         scores.append((b - a) / denominator if denominator > 1e-12 else 0.0)
     return float(np.mean(scores))
@@ -91,7 +95,9 @@ def _cluster_shot(
 ) -> tuple[np.ndarray, np.ndarray, int, float]:
     n = len(vectors)
     one_center = vectors.mean(axis=0, keepdims=True)
-    one_center /= np.clip(np.linalg.norm(one_center, axis=1, keepdims=True), 1e-12, None)
+    one_center /= np.clip(
+        np.linalg.norm(one_center, axis=1, keepdims=True), 1e-12, None
+    )
     one_cluster_distance = float(np.mean(1.0 - vectors @ one_center[0]))
     if n < 3 or one_cluster_distance <= single_cluster_max_distance:
         labels = np.zeros(n, dtype=np.int32)
@@ -139,9 +145,12 @@ def select_video_keyframes(
     compact_path = output_dir / f"{video_id}.f16.npy"
     report_path = paths.reports / f"keyframes_{video_id}.json"
     if selected_path.exists() and not force:
-        raise FileExistsError(f"Output exists: {selected_path}. Use --force to rebuild.")
+        raise FileExistsError(
+            f"Output exists: {selected_path}. Use --force to rebuild."
+        )
 
-    mapping = pd.read_parquet(mapping_path).sort_values("embedding_row").reset_index(drop=True)
+    mapping = ensure_frame_identity(pd.read_parquet(mapping_path))
+    mapping = mapping.sort_values("embedding_row").reset_index(drop=True)
     embeddings = np.load(matrix_path, mmap_mode="r")
     if len(mapping) != len(embeddings):
         raise ValueError("Embedding matrix and mapping row counts differ")
@@ -178,7 +187,9 @@ def select_video_keyframes(
             members = np.flatnonzero(labels == cluster_id)
             if not len(members):
                 continue
-            medoid_local = int(members[np.argmax(shot_vectors[members] @ centers[cluster_id])])
+            medoid_local = int(
+                members[np.argmax(shot_vectors[members] @ centers[cluster_id])]
+            )
             row = int(positions[medoid_local])
             local_medoids.add(row)
             medoid_rows.add(row)
@@ -194,8 +205,13 @@ def select_video_keyframes(
         part["is_cluster_medoid"] = part.index.isin(local_medoids)
         audit_parts.append(part)
         shot_stats.append(
-            {"shot_id": int(shot_id), "samples": len(shot), "k": chosen_k,
-             "silhouette": silhouette, "candidates": len(candidates)}
+            {
+                "shot_id": int(shot_id),
+                "samples": len(shot),
+                "k": chosen_k,
+                "silhouette": silhouette,
+                "candidates": len(candidates),
+            }
         )
 
     audit = pd.concat(audit_parts).sort_index()
@@ -209,7 +225,9 @@ def select_video_keyframes(
     adjacent_removed_to: dict[int, int] = {}
     global_within_removed_to: dict[int, int] = {}
     final_rows: set[int] = set()
-    for shot_id, shot in audit[audit.index.isin(selected_rows)].groupby("shot_id", sort=True):
+    for shot_id, shot in audit[audit.index.isin(selected_rows)].groupby(
+        "shot_id", sort=True
+    ):
         ordered = shot.sort_values("frame_id")
         kept: list[int] = []
         for row in ordered.index.to_list():
@@ -235,8 +253,11 @@ def select_video_keyframes(
         if len(kept) < target_minimum:
             removed = [int(row) for row in ordered.index if int(row) not in kept]
             removed.sort(
-                key=lambda row: max(float(vectors[row] @ vectors[x]) for x in kept)
-                if kept else -1.0
+                key=lambda row: (
+                    max(float(vectors[row] @ vectors[x]) for x in kept)
+                    if kept
+                    else -1.0
+                )
             )
             for row in removed[: target_minimum - len(kept)]:
                 kept.append(row)
@@ -274,7 +295,11 @@ def select_video_keyframes(
             if shot_id != previous_shot_id + 1:
                 continue
             previous_rows = sorted(
-                (row for row in final_rows if int(audit.at[row, "shot_id"]) == previous_shot_id),
+                (
+                    row
+                    for row in final_rows
+                    if int(audit.at[row, "shot_id"]) == previous_shot_id
+                ),
                 key=lambda row: int(audit.at[row, "frame_id"]),
             )
             current_rows = sorted(
@@ -301,26 +326,37 @@ def select_video_keyframes(
     audit["selected"] = audit.index.isin(final_rows)
     audit["redundant_to_embedding_row"] = pd.Series(removed_to, dtype="Int64")
     audit.loc[audit.index.isin(removed_to), "selection_stage"] = "redundancy_removed"
-    audit.loc[audit.index.isin(adjacent_removed_to), "selection_stage"] = "adjacent_shot_removed"
-    audit.loc[audit.index.isin(global_within_removed_to), "selection_stage"] = "global_within_shot_removed"
+    audit.loc[audit.index.isin(adjacent_removed_to), "selection_stage"] = (
+        "adjacent_shot_removed"
+    )
+    audit.loc[audit.index.isin(global_within_removed_to), "selection_stage"] = (
+        "global_within_shot_removed"
+    )
     audit = audit.reset_index(drop=True)
 
     selected = audit[audit["selected"]].sort_values("frame_id").copy()
     selected.insert(0, "keyframe_row", np.arange(len(selected), dtype=np.int64))
     selected["selection_reasons"] = selected.apply(
         lambda row: "|".join(
-            reason for reason, enabled in (
+            reason
+            for reason, enabled in (
                 ("protected_anchor", bool(row["is_protected_anchor"])),
                 ("cluster_medoid", bool(row["is_cluster_medoid"])),
-            ) if enabled
-        ), axis=1
+            )
+            if enabled
+        ),
+        axis=1,
     )
-    compact = vectors[selected["embedding_row"].to_numpy(dtype=np.int64)].astype(np.float16)
+    compact = vectors[selected["embedding_row"].to_numpy(dtype=np.int64)].astype(
+        np.float16
+    )
 
     atomic_write_parquet(selected, selected_path)
     atomic_write_parquet(audit, audit_path)
     temporary = compact_path.with_suffix(compact_path.suffix + ".tmp")
-    matrix = np.lib.format.open_memmap(temporary, mode="w+", dtype=np.float16, shape=compact.shape)
+    matrix = np.lib.format.open_memmap(
+        temporary, mode="w+", dtype=np.float16, shape=compact.shape
+    )
     matrix[:] = compact
     matrix.flush()
     del matrix

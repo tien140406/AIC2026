@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal
 import pandas as pd
 from pydantic import BaseModel, Field, model_validator
 
+from ..common.identity import frame_uid, seconds_to_ms
 from ..common.io import atomic_write_parquet
 
 PROMPT_VERSION = "gemini_frame_ocr_v5_batched_screened"
@@ -274,9 +275,14 @@ def frame_record(payload: dict[str, Any]) -> dict[str, Any]:
     raw_text = "\n".join(texts)
     return {
         "video_id": payload["video_id"],
+        "frame_uid": payload.get("frame_uid")
+        or frame_uid(payload["video_id"], int(payload["frame_id"])),
         "shot_id": payload.get("shot_id"),
         "frame_id": payload["frame_id"],
         "pts_time": payload.get("pts_time"),
+        "pts_ms": payload.get("pts_ms")
+        if payload.get("pts_ms") is not None
+        else seconds_to_ms(payload.get("pts_time")),
         "image_path": payload["image_path"],
         "image_sha256": payload["image_sha256"],
         "has_text": ocr.has_text,
@@ -362,9 +368,11 @@ def write_summary_tables(
 
     frame_columns = [
         "video_id",
+        "frame_uid",
         "shot_id",
         "frame_id",
         "pts_time",
+        "pts_ms",
         "image_path",
         "image_sha256",
         "has_text",
@@ -385,9 +393,11 @@ def write_summary_tables(
     ]
     failure_columns = [
         "video_id",
+        "frame_uid",
         "shot_id",
         "frame_id",
         "pts_time",
+        "pts_ms",
         "image_path",
         "image_sha256",
         "model",

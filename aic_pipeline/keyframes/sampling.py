@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from ..common.identity import frame_uid, seconds_to_ms
 from ..common.io import atomic_write_json, atomic_write_parquet
 from ..common.paths import PipelinePaths
 
@@ -36,9 +37,7 @@ def sample_shot(
     if boundary_radius < 0:
         raise ValueError("boundary_radius must be non-negative")
     if start_frame < 0 or end_frame_exclusive <= start_frame:
-        raise ValueError(
-            f"Invalid shot range: [{start_frame}, {end_frame_exclusive})"
-        )
+        raise ValueError(f"Invalid shot range: [{start_frame}, {end_frame_exclusive})")
 
     reasons: dict[int, set[str]] = defaultdict(set)
     for frame_id in range(start_frame, end_frame_exclusive, stride):
@@ -47,8 +46,12 @@ def sample_shot(
     if include_anchors:
         last_frame = end_frame_exclusive - 1
         middle_frame = (start_frame + last_frame) // 2
-        _add_reason(reasons, start_frame, "shot_start", start_frame, end_frame_exclusive)
-        _add_reason(reasons, middle_frame, "shot_middle", start_frame, end_frame_exclusive)
+        _add_reason(
+            reasons, start_frame, "shot_start", start_frame, end_frame_exclusive
+        )
+        _add_reason(
+            reasons, middle_frame, "shot_middle", start_frame, end_frame_exclusive
+        )
         _add_reason(reasons, last_frame, "shot_end", start_frame, end_frame_exclusive)
 
         for offset in range(boundary_radius + 1):
@@ -111,7 +114,9 @@ def build_video_sampling_manifest(
     videos = pd.read_parquet(paths.manifests / "videos.parquet")
     match = videos.loc[videos["video_id"] == video_id]
     if len(match) != 1:
-        raise ValueError(f"Expected one video manifest row for {video_id}, got {len(match)}")
+        raise ValueError(
+            f"Expected one video manifest row for {video_id}, got {len(match)}"
+        )
     video = match.iloc[0]
     frame_count = int(video["frame_count"])
     fps = float(video["fps"])
@@ -138,6 +143,8 @@ def build_video_sampling_manifest(
                     "shot_length": end_frame - start_frame,
                     "frame_id": sample["frame_id"],
                     "pts_time": sample["frame_id"] / fps,
+                    "pts_ms": seconds_to_ms(sample["frame_id"] / fps),
+                    "frame_uid": frame_uid(video_id, sample["frame_id"]),
                     "sampling_reason": sample["sampling_reason"],
                     "is_mandatory": sample["is_mandatory"],
                     "intra_label": intra_label,
@@ -145,7 +152,9 @@ def build_video_sampling_manifest(
                 }
             )
 
-    samples = pd.DataFrame(rows).sort_values(["frame_id", "shot_id"]).reset_index(drop=True)
+    samples = (
+        pd.DataFrame(rows).sort_values(["frame_id", "shot_id"]).reset_index(drop=True)
+    )
     samples.insert(0, "sample_id", range(len(samples)))
 
     invalid_ranges = samples.loc[

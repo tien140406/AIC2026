@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from ..common.identity import frame_uid, seconds_to_ms
 from ..common.io import atomic_write_json, atomic_write_parquet
 from .schema import valid_raw_payload
 
@@ -108,9 +109,14 @@ def _frame_summary(
     ordered_counts = dict(sorted(counts.items()))
     return {
         "video_id": payload["video_id"],
+        "frame_uid": payload.get("frame_uid")
+        or frame_uid(payload["video_id"], int(payload["frame_id"])),
         "shot_id": payload.get("shot_id"),
         "frame_id": int(payload["frame_id"]),
         "pts_time": payload.get("pts_time"),
+        "pts_ms": payload.get("pts_ms")
+        if payload.get("pts_ms") is not None
+        else seconds_to_ms(payload.get("pts_time")),
         "image_path": payload["image_path"],
         "image_sha256": payload["image_sha256"],
         "image_width": int(payload["image_width"]),
@@ -141,9 +147,14 @@ def _detection_rows(
         rows.append(
             {
                 "video_id": payload["video_id"],
+                "frame_uid": payload.get("frame_uid")
+                or frame_uid(payload["video_id"], int(payload["frame_id"])),
                 "shot_id": payload.get("shot_id"),
                 "frame_id": int(payload["frame_id"]),
                 "pts_time": payload.get("pts_time"),
+                "pts_ms": payload.get("pts_ms")
+                if payload.get("pts_ms") is not None
+                else seconds_to_ms(payload.get("pts_time")),
                 "detection_id": detection_id,
                 "class_id": int(detection["class_id"]),
                 "class_name": str(detection["class_name"]),
@@ -211,9 +222,11 @@ def write_summary_tables(
 
     frame_columns = [
         "video_id",
+        "frame_uid",
         "shot_id",
         "frame_id",
         "pts_time",
+        "pts_ms",
         "image_path",
         "image_sha256",
         "image_width",
@@ -231,9 +244,11 @@ def write_summary_tables(
     ]
     detection_columns = [
         "video_id",
+        "frame_uid",
         "shot_id",
         "frame_id",
         "pts_time",
+        "pts_ms",
         "detection_id",
         "class_id",
         "class_name",

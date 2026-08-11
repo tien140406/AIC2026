@@ -149,6 +149,17 @@ Sau khi chọn xong final keyframes mới chạy các stage metadata đắt hơn
 - OCR text và bounding box;
 - Co-DETR object labels, confidence và bounding box.
 
+Sau khi các artifact hoàn tất, materialize serving layer dùng chung:
+
+```text
+per-video artifacts
+  -> global SQLite catalog (frame_uid, normalized metadata, OCR/ASR FTS)
+  -> one Milvus collection per embedding model/version
+```
+
+Serving joins dùng `frame_uid = <video_id>:<original_frame_id>` và timestamp
+integer `pts_ms`; `embedding_row` chỉ là offset nội bộ của từng matrix file.
+
 Tất cả visual embedding phải được L2-normalize trước khi dùng cosine similarity.
 
 Tạo ba cấp representation:

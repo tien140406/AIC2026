@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
+from ..common.identity import frame_uid, seconds_to_ms
 from ..common.io import atomic_write_json, atomic_write_parquet
 from ..common.paths import PipelinePaths
 
@@ -114,9 +115,13 @@ def _build_frame_rows(
         object_path = object_dir / f"{number:03d}.json" if object_dir and number else None
         yield {
             "video_id": video_id,
+            "frame_uid": frame_uid(video_id, frame_id)
+            if frame_id is not None
+            else None,
             "keyframe_number": number,
             "frame_id": frame_id,
             "pts_time": pts_time,
+            "pts_ms": seconds_to_ms(pts_time),
             "fps": _safe_float(item.get("fps")),
             "image_path": str(image_path) if image_path else None,
             "image_exists": bool(image_path and image_path.exists()),

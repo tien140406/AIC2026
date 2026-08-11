@@ -18,6 +18,7 @@ class PipelinePaths:
     transcripts: Path
     audio: Path
     indexes: Path
+    serving: Path
 
     @classmethod
     def from_root(cls, root: str | Path) -> PipelinePaths:
@@ -36,6 +37,7 @@ class PipelinePaths:
             transcripts=workspace / "transcripts",
             audio=workspace / "audio" / "asr",
             indexes=workspace / "indexes",
+            serving=workspace / "serving",
         )
 
     def ensure_output_dirs(self) -> None:
@@ -48,6 +50,7 @@ class PipelinePaths:
         self.transcripts.mkdir(parents=True, exist_ok=True)
         self.audio.mkdir(parents=True, exist_ok=True)
         self.indexes.mkdir(parents=True, exist_ok=True)
+        self.serving.mkdir(parents=True, exist_ok=True)
 
     def transcript_dir(self, video_id: str) -> Path:
         return self.transcripts / video_id

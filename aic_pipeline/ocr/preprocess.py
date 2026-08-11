@@ -10,8 +10,8 @@ from typing import Any, Protocol
 import pandas as pd
 from PIL import Image, ImageOps
 
+from ..common.identity import frame_uid, seconds_to_ms
 from ..common.io import atomic_write_json, atomic_write_parquet
-
 
 PREPROCESS_VERSION = "gemini_screening_v2"
 DEFAULT_MAX_SIDE = 960
@@ -124,9 +124,7 @@ def _parse_paddle_regions(result: Any, width: int, height: int) -> list[TextRegi
     parsed: list[TextRegion] = []
     for index, polygon in enumerate(polygons):
         points = [
-            (float(point[0]), float(point[1]))
-            for point in polygon
-            if len(point) >= 2
+            (float(point[0]), float(point[1])) for point in polygon if len(point) >= 2
         ]
         if not points:
             continue
@@ -311,9 +309,21 @@ def screen_jobs(
         frame_id = int(row["frame_id"])
         image_sha256 = str(row["image_sha256"])
         old = cached.get(frame_id)
-        if not force and old is not None and _cached_record_is_valid(
-            old, image_sha256=image_sha256, config_signature=config_signature
+        if (
+            not force
+            and old is not None
+            and _cached_record_is_valid(
+                old, image_sha256=image_sha256, config_signature=config_signature
+            )
         ):
+            old = dict(old)
+            old["frame_uid"] = row.get("frame_uid") or frame_uid(video_id, frame_id)
+            old["pts_time"] = row.get("pts_time")
+            old["pts_ms"] = (
+                row.get("pts_ms")
+                if pd.notna(row.get("pts_ms"))
+                else seconds_to_ms(row.get("pts_time"))
+            )
             records.append(old)
             reused += 1
             continue
@@ -331,7 +341,12 @@ def screen_jobs(
             )
         record = {
             "video_id": video_id,
+            "frame_uid": row.get("frame_uid") or frame_uid(video_id, frame_id),
             "frame_id": frame_id,
+            "pts_time": row.get("pts_time"),
+            "pts_ms": row.get("pts_ms")
+            if pd.notna(row.get("pts_ms"))
+            else seconds_to_ms(row.get("pts_time")),
             "image_path": str(image_path),
             "image_sha256": image_sha256,
             "screening_config_signature": config_signature,

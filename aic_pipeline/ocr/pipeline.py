@@ -5,7 +5,7 @@ import json
 import os
 import random
 import re
-import sys
+import sys  # noqa: F401 - exposed for CLI tests and callers overriding argv.
 import threading
 import time
 import uuid
@@ -29,6 +29,8 @@ from google import genai
 from google.genai import types
 from PIL import Image, ImageOps
 
+from ..common.identity import ensure_frame_identity, frame_uid, seconds_to_ms
+from ..common.io import atomic_write_json
 from .gemini import (
     PROMPT_VERSION,
     FrameOcrBatch,
@@ -49,7 +51,6 @@ from .preprocess import (
     PREPROCESS_VERSION,
     screen_jobs,
 )
-from ..common.io import atomic_write_json
 
 THREAD_STATE = threading.local()
 
@@ -108,9 +109,16 @@ def failure_payload(
     disposition = classify_error(error)
     return {
         "video_id": row["video_id"],
+        "frame_uid": row.get("frame_uid")
+        or frame_uid(row["video_id"], int(row["frame_id"])),
         "shot_id": int(row["shot_id"]) if pd.notna(row.get("shot_id")) else None,
         "frame_id": int(row["frame_id"]),
         "pts_time": float(row["pts_time"]) if pd.notna(row.get("pts_time")) else None,
+        "pts_ms": (
+            int(row["pts_ms"])
+            if pd.notna(row.get("pts_ms"))
+            else seconds_to_ms(row.get("pts_time"))
+        ),
         "image_path": str(row["image_path"]),
         "image_sha256": row["image_sha256"],
         "model": model,
@@ -141,8 +149,7 @@ def process_batch(
     started = time.monotonic()
     if stop_event.is_set():
         return [
-            {"status": "cancelled", "frame_id": int(row["frame_id"])}
-            for row in rows
+            {"status": "cancelled", "frame_id": int(row["frame_id"])} for row in rows
         ]
 
     results: list[dict[str, Any]] = []
@@ -182,8 +189,7 @@ def process_batch(
     for attempt in range(1, max_attempts + 1):
         if stop_event.is_set():
             return results + [
-                {"status": "cancelled", "frame_id": frame_id}
-                for frame_id in frame_ids
+                {"status": "cancelled", "frame_id": frame_id} for frame_id in frame_ids
             ]
         try:
             response = client_for_thread(
@@ -219,6 +225,8 @@ def process_batch(
                 frame_id = int(row["frame_id"])
                 payload = {
                     "video_id": row["video_id"],
+                    "frame_uid": row.get("frame_uid")
+                    or frame_uid(row["video_id"], frame_id),
                     "shot_id": int(row["shot_id"])
                     if pd.notna(row.get("shot_id"))
                     else None,
@@ -226,6 +234,11 @@ def process_batch(
                     "pts_time": float(row["pts_time"])
                     if pd.notna(row.get("pts_time"))
                     else None,
+                    "pts_ms": (
+                        int(row["pts_ms"])
+                        if pd.notna(row.get("pts_ms"))
+                        else seconds_to_ms(row.get("pts_time"))
+                    ),
                     "image_path": str(row["image_path"]),
                     "image_sha256": row["image_sha256"],
                     "model": model,
@@ -347,7 +360,7 @@ def load_jobs(
         with ThreadPoolExecutor(max_workers=hash_workers) as executor:
             hashes = list(executor.map(file_sha256, image_paths))
     jobs["image_sha256"] = hashes
-    return jobs
+    return ensure_frame_identity(jobs)
 
 
 def checkpoint_report(
@@ -372,8 +385,8 @@ def checkpoint_report(
         & (frames["prompt_version"] == selection["prompt_version"])
         & frames["frame_id"].isin(selected_ids)
     ]
-    expected_frame_signatures = matching_frames["frame_id"].astype(int).map(
-        selected_signatures
+    expected_frame_signatures = (
+        matching_frames["frame_id"].astype(int).map(selected_signatures)
     )
     matching_frames = matching_frames.loc[
         matching_frames["screening_signature"] == expected_frame_signatures
@@ -383,8 +396,8 @@ def checkpoint_report(
         & (failure_frame["prompt_version"] == selection["prompt_version"])
         & failure_frame["frame_id"].isin(selected_ids)
     ]
-    expected_failure_signatures = matching_failures["frame_id"].astype(int).map(
-        selected_signatures
+    expected_failure_signatures = (
+        matching_failures["frame_id"].astype(int).map(selected_signatures)
     )
     matching_failures = matching_failures.loc[
         matching_failures["screening_signature"] == expected_failure_signatures
