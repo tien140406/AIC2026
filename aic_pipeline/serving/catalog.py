@@ -225,6 +225,8 @@ def _load_embeddings(
         if not vector_path.is_file():
             continue
         mapping = ensure_frame_identity(pd.read_parquet(mapping_path))
+        if "entity_type" in mapping.columns:
+            mapping = mapping.loc[mapping["entity_type"] != "roi"].copy()
         mapping = mapping.loc[mapping["frame_uid"].isin(keyframe_uids)]
         if mapping.empty:
             continue

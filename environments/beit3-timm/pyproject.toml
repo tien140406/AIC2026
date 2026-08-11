@@ -3,12 +3,14 @@ name = "aic-beit3-timm-runtime"
 version = "0.1.0"
 requires-python = ">=3.10,<3.11"
 dependencies = [
+    "elasticsearch>=8.15,<9",
     "huggingface-hub>=0.34",
     "numpy>=2.0",
     "open-clip-torch>=2.30",
     "opencv-python>=4.10",
     "pandas>=2.2",
     "pillow>=11.0",
+    "pymilvus>=2.5,<3",
     "pyarrow>=18.0",
     "safetensors>=0.5",
     "timm>=1.0.20",

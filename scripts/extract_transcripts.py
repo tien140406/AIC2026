@@ -2,12 +2,46 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def _reexec_with_nvidia_libraries() -> None:
+    """Expose pip-installed CUDA libraries before CTranslate2 is imported."""
+    guard = "AIC_ASR_CUDA_LIBS_READY"
+    if os.environ.get(guard) == "1":
+        return
+
+    site_packages = (
+        Path(sys.prefix)
+        / "lib"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+        / "site-packages"
+    )
+    library_dirs = [
+        site_packages / "nvidia" / package / "lib"
+        for package in ("cublas", "cudnn")
+    ]
+    existing_dirs = [str(path) for path in library_dirs if path.is_dir()]
+    if not existing_dirs:
+        return
+
+    current = os.environ.get("LD_LIBRARY_PATH", "")
+    current_dirs = [path for path in current.split(os.pathsep) if path]
+    env = os.environ.copy()
+    env["LD_LIBRARY_PATH"] = os.pathsep.join(
+        [*existing_dirs, *[path for path in current_dirs if path not in existing_dirs]]
+    )
+    env[guard] = "1"
+    os.execvpe(sys.executable, [sys.executable, *sys.argv], env)
+
+
+_reexec_with_nvidia_libraries()
 
 from aic_pipeline.asr.pipeline import (
     TranscriptPipeline,

@@ -113,6 +113,11 @@ full transcript scan and use indexed lookup as the collection grows. Rebuilding
 the SQLite index also rebuilds all reverse links atomically, while the query CLI
 opens the completed index read-only and never triggers a rebuild.
 
+For production serving, `scripts/index_elasticsearch.py` writes one document per
+L0/L1 segment to `aic-asr-segments-v1`, including `keyframe_uids` for joining
+Milvus keyframe/ROI results. The SQLite FTS5 index remains useful for local
+offline search and tests but is not required by the Elasticsearch/Milvus path.
+
 Dense transcript embeddings are deliberately deferred until the repository has
 a shared text-embedding/vector-index abstraction; the extraction schema is
 already suitable for adding that index without rerunning ASR.

@@ -1,1 +1,1 @@
-"""Global metadata catalog and vector-serving integrations."""
+"""Elasticsearch, Milvus, and local catalog serving integrations."""

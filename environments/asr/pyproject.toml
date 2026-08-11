@@ -4,6 +4,8 @@ version = "0.1.0"
 requires-python = ">=3.10,<3.11"
 dependencies = [
     "faster-whisper>=1.2.0",
+    "nvidia-cublas-cu12==12.4.5.8; platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "nvidia-cudnn-cu12==9.1.0.70; platform_machine == 'x86_64' and sys_platform == 'linux'",
     "pandas>=2.2",
     "pyarrow>=18.0",
     "pytest>=8.0",
