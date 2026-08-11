@@ -136,15 +136,18 @@ Tập frame stride 10 vẫn được giữ trong một **dense shadow index**, k
 
 ### 4.4. Multi-modal feature extraction
 
-Mỗi sampled frame nên có:
+Mỗi sampled frame trước selection nên có:
 
 - BEiT-3 image embedding từ checkpoint đã fine-tune cho image–text retrieval;
 - CLIP ViT-B/32 feature được BTC cung cấp;
-- OCR text và bounding box;
-- object labels, confidence và bounding box;
 - blur score, black-frame score, exposure score;
 - motion score hoặc optical-flow magnitude;
 - `video_id`, `shot_id`, original `frame_id`, timestamp và PTS.
+
+Sau khi chọn xong final keyframes mới chạy các stage metadata đắt hơn:
+
+- OCR text và bounding box;
+- Co-DETR object labels, confidence và bounding box.
 
 Tất cả visual embedding phải được L2-normalize trước khi dùng cosine similarity.
 
@@ -196,15 +199,17 @@ Ngoài medoid, luôn giữ:
 
 Không loại frame chỉ dựa trên HSV histogram threshold `0.8` như LMSKE.
 
-Chỉ xem hai frame là dư thừa khi đồng thời thỏa phần lớn điều kiện:
+Chỉ xem hai frame là dư thừa khi đồng thời thỏa phần lớn điều kiện có sẵn trước
+final-keyframe selection:
 
 ```text
 embedding cosine similarity > 0.97–0.985
 AND temporal distance nhỏ
-AND OCR gần giống nhau
-AND object set gần giống nhau
 AND không thuộc vùng boundary quan trọng
 ```
+
+OCR và object detection chạy sau final-keyframe selection, nên không được dùng
+để quyết định loại keyframe trong redundancy pass.
 
 Quy tắc bảo vệ:
 

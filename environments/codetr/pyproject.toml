@@ -1,0 +1,40 @@
+[project]
+name = "aic-codetr-runtime"
+version = "0.1.0"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+  "einops>=0.6,<0.9",
+  "fairscale>=0.4.13,<0.5",
+  "fvcore>=0.1.5.post20221221",
+  "gdown>=5.2",
+  "matplotlib>=3.7,<3.9",
+  "mmcv-full @ https://download.openmmlab.com/mmcv/dist/cu117/torch1.13.0/mmcv_full-1.7.0-cp310-cp310-manylinux1_x86_64.whl",
+  "numpy>=1.24,<2",
+  "opencv-python>=4.8,<5",
+  "pandas>=2.0,<3",
+  "pillow>=10,<12",
+  "pyarrow>=14,<20",
+  "pycocotools>=2.0.7",
+  "pytest>=8,<9",
+  "scipy>=1.10,<2",
+  "setuptools>=68,<81",
+  "six>=1.16",
+  "tensorboard>=2.14,<3",
+  "terminaltables>=3.1",
+  "timm>=0.9,<1.0",
+  "torch==1.13.0",
+  "torchvision==0.14.0",
+  "yapf==0.40.1",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu117" }
+torchvision = { index = "pytorch-cu117" }
+
+[[tool.uv.index]]
+name = "pytorch-cu117"
+url = "https://download.pytorch.org/whl/cu117"
+explicit = true
+
+[tool.uv]
+package = false

@@ -14,9 +14,9 @@ dataset audit
 ```
 
 Dataset files, checkpoints, virtual environments, and generated artifacts are
-excluded from Git. OpenCLIP retrieval embeddings, ASR extraction, and Gemini
-OCR are available as separate offline stages; multimodal fusion remains outside
-this milestone while it is being evaluated.
+excluded from Git. OpenCLIP retrieval embeddings, ASR extraction, Gemini OCR,
+and Co-DETR object metadata are available as separate offline stages;
+multimodal fusion remains outside this milestone while it is being evaluated.
 
 ## Runtime environments
 
@@ -25,9 +25,12 @@ uv sync --project environments\omnishotcut
 uv sync --project environments\beit3-timm
 uv sync --project environments\asr
 uv sync --project environments\gemini
+uv sync --project environments\codetr
 ```
 
 OmniShotCut is pinned as a Git submodule under `third_party/OmniShotCut`.
+Co-DETR source and checkpoints are reproducibly prepared by
+`scripts/setup_codetr.py` but remain ignored because of their size.
 
 ## Pipeline example
 
@@ -147,6 +150,46 @@ same command skips successes whose image hash, model, and prompt version match.
 
 Exit codes are `0` for success, `2` for completed work with frame failures, `3`
 for terminal quota exhaustion, and `130` for an operator interruption.
+
+## Co-DETR objects on final keyframes
+
+Co-DETR runs only after final keyframe selection and JPG export. It does not
+participate in clustering or redundancy elimination. OCR and object detection
+consume the same immutable final-keyframe JPG manifest and may run independently.
+
+```bash
+uv sync --project environments/codetr
+
+uv run --project environments/codetr \
+  python scripts/setup_codetr.py
+
+uv run --project environments/codetr \
+  python scripts/extract_codetr_objects.py \
+  --video-id L21_V001 \
+  --score-threshold 0.30 \
+  --checkpoint-every 100
+```
+
+The pinned baseline is Co-DINO 5-scale R50 LSJ 3x trained on COCO. It runs in
+FP32 because the pinned MMCV deformable-attention CUDA kernel does not implement
+FP16. A smoke inference on an RTX 4060 Laptop GPU used about 1.64 GB peak VRAM.
+
+Raw predictions above `--raw-score-floor` are checkpointed atomically per frame
+under `workspace/objects/co_dino_5scale_lsj_r50_3x_coco/<video_id>/raw/`.
+`frames.parquet` stores one object summary per final keyframe, while
+`detections.parquet` stores one row per filtered bounding box. Re-running with
+new filtering thresholds does not require GPU inference:
+
+```bash
+uv run --project environments/codetr \
+  python scripts/filter_object_detections.py \
+  --output-dir workspace/objects/co_dino_5scale_lsj_r50_3x_coco/L21_V001 \
+  --score-threshold 0.40
+```
+
+Detection filtering removes low-confidence, very small, and near-duplicate
+same-class boxes. Frames with no retained objects remain in `frames.parquet` so
+every final keyframe can still be joined by `(video_id, frame_id)`.
 
 ## ASR transcript extraction
 
