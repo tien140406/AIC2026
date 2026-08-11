@@ -237,6 +237,10 @@ python3 scripts/run_query_pipeline.py \
 Use `--no-start-serving --no-check-serving` when Elasticsearch and Milvus are
 already managed outside this repository.
 
+Every orchestrated query writes a JSON execution/result report, an HTML report
+with visible keyframe thumbnails, and a sibling `query_assets_<timestamp>/`
+directory containing copies of the returned JPGs under `workspace/reports/`.
+
 Cosine and BM25 scores are included as evidence but are not added directly;
 RRF combines ranks because the score distributions are not comparable.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -140,6 +142,221 @@ def write_report(report: dict[str, Any], path: Path) -> None:
     os.replace(temporary, path)
 
 
+def safe_file_component(value: object) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("._")
+    return cleaned or "result"
+
+
+def format_pts(pts_ms: object) -> str:
+    try:
+        milliseconds = int(pts_ms)
+    except (TypeError, ValueError):
+        return "unknown"
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, millis = divmod(remainder, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}"
+
+
+def render_query_report(
+    query_result: dict[str, Any],
+    *,
+    root: Path,
+    html_path: Path,
+    image_directory: Path,
+) -> dict[str, Any]:
+    html_path.parent.mkdir(parents=True, exist_ok=True)
+    image_directory.mkdir(parents=True, exist_ok=True)
+    cards: list[str] = []
+    exported_images: list[str] = []
+
+    results = query_result.get("results") or []
+    for rank, result in enumerate(results, start=1):
+        video_id = result.get("video_id", "unknown")
+        frame_id = result.get("frame_id", "unknown")
+        image_path = result.get("image_path")
+        image_markup = '<div class="missing-image">Image unavailable</div>'
+        if image_path:
+            source = Path(str(image_path))
+            if not source.is_absolute():
+                source = root / source
+            if source.is_file():
+                suffix = source.suffix.lower() or ".jpg"
+                image_name = (
+                    f"{rank:03d}_{safe_file_component(video_id)}_"
+                    f"{safe_file_component(frame_id)}{suffix}"
+                )
+                exported = image_directory / image_name
+                shutil.copy2(source, exported)
+                exported_images.append(str(exported))
+                result["report_image_path"] = str(exported)
+                image_href = os.path.relpath(exported, html_path.parent)
+                image_markup = (
+                    f'<a class="image-link" href="{escape(image_href)}">'
+                    f'<img src="{escape(image_href)}" '
+                    f'alt="Result {rank}: {escape(str(video_id))} frame '
+                    f'{escape(str(frame_id))}" loading="lazy"></a>'
+                )
+
+        evidence_items = []
+        for evidence in result.get("evidence") or []:
+            label = escape(str(evidence.get("source", "unknown")))
+            evidence_rank = escape(str(evidence.get("rank", "-")))
+            score = evidence.get("score")
+            score_text = f"{float(score):.4f}" if score is not None else "-"
+            class_name = evidence.get("class_name")
+            class_text = (
+                f" / {escape(str(class_name))}" if class_name is not None else ""
+            )
+            evidence_items.append(
+                f"<li><strong>{label}</strong><span>rank {evidence_rank} / "
+                f"score {score_text}{class_text}</span></li>"
+            )
+        evidence_markup = "".join(evidence_items) or "<li>No evidence</li>"
+
+        frame = result.get("frame") or {}
+        ocr_text = frame.get("ocr_text") or ""
+        rrf_score = result.get("rrf_score")
+        rrf_text = f"{float(rrf_score):.6f}" if rrf_score is not None else "-"
+        cards.append(
+            f"""
+            <article class="result-card">
+              <div class="rank">#{rank}</div>
+              {image_markup}
+              <div class="content">
+                <div class="identity">
+                  <h2>{escape(str(video_id))}</h2>
+                  <span>frame {escape(str(frame_id))}</span>
+                </div>
+                <dl>
+                  <div><dt>Timestamp</dt><dd>{format_pts(result.get("pts_ms"))}</dd></div>
+                  <div><dt>Shot</dt><dd>{escape(str(result.get("shot_id", "-")))}</dd></div>
+                  <div><dt>RRF</dt><dd>{rrf_text}</dd></div>
+                </dl>
+                <p class="ocr">{escape(str(ocr_text)) if ocr_text else "No OCR text"}</p>
+                <ul class="evidence">{evidence_markup}</ul>
+              </div>
+            </article>
+            """
+        )
+
+    query = escape(str(query_result.get("query", "")))
+    video_filter = escape(str(query_result.get("video_id") or "all videos"))
+    result_count = len(results)
+    document = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AIC Query Report</title>
+  <style>
+    :root {{
+      --paper: #f2eadb;
+      --ink: #17231e;
+      --muted: #657168;
+      --accent: #cb4b2c;
+      --forest: #244b3d;
+      --line: #d5c9b6;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 5%, #fff8e8 0 12%, transparent 36%),
+        linear-gradient(135deg, var(--paper), #e2dccd);
+      font-family: "Trebuchet MS", sans-serif;
+    }}
+    header {{
+      padding: 48px clamp(20px, 6vw, 88px) 36px;
+      color: #fffaf0;
+      background: var(--forest);
+      border-bottom: 8px solid var(--accent);
+    }}
+    header p {{ margin: 8px 0 0; color: #cddbd4; }}
+    h1 {{ margin: 0; font: 700 clamp(32px, 6vw, 72px)/1 Georgia, serif; }}
+    main {{ width: min(1400px, 94vw); margin: 34px auto 80px; }}
+    .summary {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 28px;
+      margin-bottom: 24px;
+      color: var(--muted);
+    }}
+    .result-grid {{ display: grid; gap: 22px; }}
+    .result-card {{
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(280px, 42%) 1fr;
+      overflow: hidden;
+      background: rgba(255, 253, 247, 0.94);
+      border: 1px solid var(--line);
+      box-shadow: 0 16px 34px rgba(36, 45, 38, 0.12);
+    }}
+    .rank {{
+      position: absolute;
+      z-index: 2;
+      top: 14px;
+      left: 14px;
+      padding: 7px 11px;
+      color: white;
+      background: var(--accent);
+      font-weight: 800;
+    }}
+    .image-link, .missing-image {{ min-height: 270px; background: #c9c3b5; }}
+    img {{ display: block; width: 100%; height: 100%; min-height: 270px; object-fit: cover; }}
+    .missing-image {{ display: grid; place-items: center; color: var(--muted); }}
+    .content {{ padding: clamp(20px, 3vw, 38px); }}
+    .identity {{ display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }}
+    h2 {{ margin: 0; font: 700 30px/1 Georgia, serif; }}
+    .identity span {{ color: var(--accent); font-weight: 700; }}
+    dl {{ display: flex; flex-wrap: wrap; gap: 10px 24px; margin: 20px 0; }}
+    dl div {{ min-width: 110px; }}
+    dt {{ color: var(--muted); font-size: 12px; text-transform: uppercase; }}
+    dd {{ margin: 3px 0 0; font-weight: 700; }}
+    .ocr {{ padding: 14px; background: #f4eddf; border-left: 4px solid var(--accent); }}
+    .evidence {{ list-style: none; padding: 0; margin: 18px 0 0; }}
+    .evidence li {{
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line);
+    }}
+    .evidence span {{ color: var(--muted); text-align: right; }}
+    @media (max-width: 760px) {{
+      header {{ padding-top: 34px; }}
+      .result-card {{ grid-template-columns: 1fr; }}
+      .image-link, .missing-image, img {{ min-height: 210px; max-height: 360px; }}
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Query Results</h1>
+    <p>{query}</p>
+  </header>
+  <main>
+    <div class="summary">
+      <span><strong>{result_count}</strong> results</span>
+      <span>Scope: <strong>{video_filter}</strong></span>
+      <span>Generated: <strong>{escape(utc_now())}</strong></span>
+    </div>
+    <section class="result-grid">
+      {''.join(cards) if cards else '<p>No results found.</p>'}
+    </section>
+  </main>
+</body>
+</html>
+"""
+    html_path.write_text(document, encoding="utf-8")
+    return {
+        "html_report": str(html_path),
+        "image_directory": str(image_directory),
+        "exported_images": exported_images,
+    }
+
+
 def run_query_pipeline(
     args: argparse.Namespace, root: Path, stages: Sequence[QueryStage]
 ) -> int:
@@ -147,12 +364,17 @@ def run_query_pipeline(
     report_path = (
         root / "workspace" / "reports" / f"query_pipeline_{timestamp}.json"
     )
+    html_path = root / "workspace" / "reports" / f"query_report_{timestamp}.html"
+    image_directory = (
+        root / "workspace" / "reports" / f"query_assets_{timestamp}"
+    )
     report: dict[str, Any] = {
         "status": "running",
         "started_at": utc_now(),
         "finished_at": None,
         "root": str(root),
         "options": vars(args),
+        "outputs": {"json_report": str(report_path)},
         "stages": [],
     }
     write_report(report, report_path)
@@ -183,11 +405,40 @@ def run_query_pipeline(
         else:
             started = time.monotonic()
             try:
-                completed = subprocess.run(stage.command, cwd=root, check=False)
+                capture_output = stage.name == "hybrid_query"
+                completed = subprocess.run(
+                    stage.command,
+                    cwd=root,
+                    check=False,
+                    stdout=subprocess.PIPE if capture_output else None,
+                    text=capture_output,
+                )
+                if capture_output and completed.stdout:
+                    print(completed.stdout, end="")
                 record["return_code"] = completed.returncode
                 record["status"] = (
                     "completed" if completed.returncode == 0 else "failed"
                 )
+                if capture_output and completed.returncode == 0:
+                    try:
+                        query_result = json.loads(completed.stdout)
+                    except json.JSONDecodeError as error:
+                        record["status"] = "failed"
+                        record["return_code"] = 1
+                        record["error"] = f"Invalid query JSON output: {error}"
+                    else:
+                        report["query_result"] = query_result
+                        report["outputs"].update(
+                            render_query_report(
+                                query_result,
+                                root=root,
+                                html_path=html_path,
+                                image_directory=image_directory,
+                            )
+                        )
+                        record["result_count"] = len(
+                            query_result.get("results") or []
+                        )
             except KeyboardInterrupt:
                 record["return_code"] = 130
                 record["status"] = "interrupted"
@@ -208,6 +459,8 @@ def run_query_pipeline(
     report["finished_at"] = utc_now()
     write_report(report, report_path)
     print(f"\nQuery pipeline {report['status']}. Report: {report_path}")
+    if html_path.is_file():
+        print(f"Visual report: {html_path}")
     return 0
 
 

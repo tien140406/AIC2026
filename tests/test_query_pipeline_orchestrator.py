@@ -4,6 +4,7 @@ from scripts.run_query_pipeline import (
     QUERY_STAGE_NAMES,
     build_query_stages,
     parse_args,
+    render_query_report,
     stage_in_range,
 )
 
@@ -64,3 +65,42 @@ def test_query_stage_range_is_inclusive() -> None:
     assert stage_in_range("serving_check", "serving_check", "hybrid_query")
     assert stage_in_range("hybrid_query", "serving_check", "hybrid_query")
     assert not stage_in_range("serving_up", "serving_check", "hybrid_query")
+
+
+def test_visual_report_exports_result_images(tmp_path: Path) -> None:
+    source = tmp_path / "workspace/keyframe_images/L21_V001/frame.jpg"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"fake-jpeg")
+    html_path = tmp_path / "workspace/reports/query_report.html"
+    image_directory = tmp_path / "workspace/reports/query_assets"
+    query_result = {
+        "query": "nguoi dang noi chuyen",
+        "video_id": "L21_V001",
+        "results": [
+            {
+                "video_id": "L21_V001",
+                "frame_id": 120,
+                "shot_id": 2,
+                "pts_ms": 4000,
+                "image_path": "workspace/keyframe_images/L21_V001/frame.jpg",
+                "rrf_score": 0.1,
+                "evidence": [
+                    {"source": "milvus_keyframe", "rank": 1, "score": 0.5}
+                ],
+                "frame": {"ocr_text": "news presenter"},
+            }
+        ],
+    }
+
+    outputs = render_query_report(
+        query_result,
+        root=tmp_path,
+        html_path=html_path,
+        image_directory=image_directory,
+    )
+
+    assert html_path.is_file()
+    assert len(outputs["exported_images"]) == 1
+    assert Path(outputs["exported_images"][0]).is_file()
+    assert "report_image_path" in query_result["results"][0]
+    assert "<img" in html_path.read_text(encoding="utf-8")

@@ -171,7 +171,20 @@ python3 scripts/run_query_pipeline.py \
 
 Query credentials continue to come from `ELASTICSEARCH_API_KEY`,
 `ELASTICSEARCH_USERNAME`, `ELASTICSEARCH_PASSWORD`, and `MILVUS_TOKEN`. Query
-runs write execution reports to `workspace/reports/query_pipeline_<timestamp>.json`.
+runs produce three report artifacts:
+
+- `workspace/reports/query_pipeline_<timestamp>.json`: execution metadata and
+  the complete retrieval response;
+- `workspace/reports/query_report_<timestamp>.html`: a visual result page with
+  keyframe thumbnails, timestamps, OCR, and retrieval evidence;
+- `workspace/reports/query_assets_<timestamp>/`: exported JPGs for the returned
+  top-k frames.
+
+Open the visual report locally after a query:
+
+```bash
+xdg-open workspace/reports/query_report_<timestamp>.html
+```
 
 ## Input layout
 
