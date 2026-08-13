@@ -31,7 +31,19 @@ uv sync --project environments/gemini
 copy .env.example .env
 ```
 
-Điền `GEMINI_API_KEY` trong `.env`. Không commit file này.
+LLM online đi qua 9Router theo chuẩn OpenAI Chat Completions. Cấu hình trong
+`.env`:
+
+```env
+NINEROUTER_CHAT_URL=https://router.studev.net/v1/chat/completions
+NINEROUTER_MODEL=ag/gemini-3-flash
+NINEROUTER_KEY=
+```
+
+`NINEROUTER_KEY` đang cố ý để trống theo cấu hình router hiện tại. Nếu server
+bật xác thực, tạo key tại 9Router Dashboard và điền vào biến này. Không commit
+`.env`. Các script `gemini_batch_*` và Gemini embedding là legacy, vẫn cần
+`GEMINI_API_KEY`; chúng không tương thích với endpoint Chat Completions.
 
 ## Chạy frontend
 

@@ -10,6 +10,8 @@ import numpy as np
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
+from .router_chat import RouterChatClient
+
 
 class ExpandedQuery(BaseModel):
     english_translation: str
@@ -21,14 +23,12 @@ class ExpandedQuery(BaseModel):
 class GeminiTextServices:
     def __init__(self, root: Path, index: Path,
                  embedding_model: str = "gemini-embedding-001",
-                 expansion_model: str = "gemini-3.5-flash-lite") -> None:
+                 expansion_model: str | None = None) -> None:
         self.root, self.index = root.resolve(), index.resolve()
-        self.embedding_model, self.expansion_model = embedding_model, expansion_model
+        self.embedding_model = embedding_model
         load_dotenv(self.root / ".env")
-        if not os.getenv("GEMINI_API_KEY"):
-            raise RuntimeError("GEMINI_API_KEY is not configured")
-        from google import genai
-        self.client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+        self.client = RouterChatClient(self.root)
+        self.expansion_model = expansion_model or self.client.model
         self.database = self.index / "gemini_text_cache.sqlite3"
         with sqlite3.connect(self.database) as connection:
             connection.execute("CREATE TABLE IF NOT EXISTS cache(key TEXT PRIMARY KEY, kind TEXT, value TEXT)")
@@ -51,17 +51,19 @@ class GeminiTextServices:
         prompt = f"""Expand this Vietnamese AIC video retrieval query without inventing details: {query}
 Return a faithful English translation, up to 3 concise visual paraphrases, and short Vietnamese/English keywords.
 Preserve exact counts, left/right/top/bottom positions, names, OCR strings and event order."""
-        response = self.client.models.generate_content(
-            model=self.expansion_model, contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json",
-                                               response_schema=ExpandedQuery, temperature=0,
-                                               max_output_tokens=512,
-                                               thinking_config=types.ThinkingConfig(thinking_level="MINIMAL")))
+        response = self.client.json_response(
+            prompt, ExpandedQuery, model=self.expansion_model,
+            temperature=0, max_tokens=1024)
         value = ExpandedQuery.model_validate_json(response.text)
         self._put(key, "expansion", value.model_dump_json())
         return value
 
     def embed_query(self, query: str, dimension: int) -> np.ndarray:
+        if not os.getenv("GEMINI_API_KEY"):
+            raise RuntimeError(
+                "Legacy Gemini embedding is disabled: GEMINI_API_KEY is empty. "
+                "Use the local BGE-M3/SigLIP/OpenCLIP retrieval branches."
+            )
         from google.genai import types
         key = hashlib.sha256(
             f"embed:{self.embedding_model}:{dimension}:{query}".encode("utf-8")).hexdigest()
@@ -69,7 +71,9 @@ Preserve exact counts, left/right/top/bottom positions, names, OCR strings and e
         if cached:
             vector = np.asarray(json.loads(cached), dtype=np.float32)
         else:
-            response = self.client.models.embed_content(
+            from google import genai
+            embedding_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+            response = embedding_client.models.embed_content(
                 model=self.embedding_model, contents=query,
                 config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY",
                                                 output_dimensionality=dimension))

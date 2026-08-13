@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from .object_grounding import GroundingDinoCropper
 from .qa_reasoning import answers_equivalent, classify_question, temporal_frame_ids
+from .router_chat import RouterChatClient
 
 
 class QASelection(BaseModel):
@@ -79,25 +80,12 @@ def local_exact_ocr_answer(root: Path, question: str,
 
 
 class GeminiQAEngine:
-    def __init__(self, root: Path, model: str = "gemini-3.6-flash",
+    def __init__(self, root: Path, model: str | None = None,
                  request_timeout_ms: int = 20_000) -> None:
         self.root = root.resolve()
-        self.model = model
         load_dotenv(self.root / ".env")
-        key = os.getenv("GEMINI_API_KEY")
-        if not key:
-            raise RuntimeError("GEMINI_API_KEY is not configured")
-        # Bound external latency so one API outage cannot hang the contest service.
-        self.client = genai.Client(
-            api_key=key,
-            http_options=types.HttpOptions(
-                timeout=request_timeout_ms,
-                # The SDK defaults to five attempts, which can turn one bad
-                # connection into a minute-long UI stall. The service owns any
-                # explicit retry policy, so keep each API call single-attempt.
-                retry_options=types.HttpRetryOptions(attempts=1),
-            ),
-        )
+        self.client = RouterChatClient(self.root, request_timeout_ms / 1000)
+        self.model = model or self.client.model
         self.manifest = pd.read_parquet(self.root / "workspace" / "manifests" / "videos.parquet").set_index("video_id")
         self._grounder: GroundingDinoCropper | bool | None = None
         self._frame_cache: dict[tuple[str, int], Image.Image] = {}
@@ -248,12 +236,9 @@ Rules:
         for model in (self.model,):
             for attempt in range(2):
                 try:
-                    response = self.client.models.generate_content(
-                        model=model, contents=[prompt, sheet],
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json", response_schema=QASelection,
-                            temperature=0.1, max_output_tokens=512,
-                            thinking_config=types.ThinkingConfig(thinking_level="MINIMAL")))
+                    response = self.client.json_response(
+                        prompt, QASelection, sheet, model=model,
+                        temperature=0.1, max_tokens=1024)
                     used_model = model
                     break
                 except Exception as exc:
@@ -343,12 +328,9 @@ candidate_label must be one of {', '.join(detail_mapping)}. Keep the answer shor
 """
             stage_started = time.perf_counter()
             try:
-                detail_response = self.client.models.generate_content(
-                    model=used_model, contents=[detail_prompt, detail_sheet],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json", response_schema=QASelection,
-                        temperature=0.0, max_output_tokens=512,
-                        thinking_config=types.ThinkingConfig(thinking_level="MINIMAL")))
+                detail_response = self.client.json_response(
+                    detail_prompt, QASelection, detail_sheet, model=used_model,
+                    temperature=0.0, max_tokens=1024)
                 refined = QASelection.model_validate_json(detail_response.text)
                 refined_label = refined.candidate_label.strip().upper()
                 if refined_label in detail_mapping:
