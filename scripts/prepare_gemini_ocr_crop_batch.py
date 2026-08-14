@@ -14,7 +14,7 @@ SCHEMA = {"type": "object", "properties": {
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare Gemini Batch requests for uncertain full-res OCR crops.")
+    parser = argparse.ArgumentParser(description="Prepare 9Router requests for uncertain full-res OCR crops.")
     parser.add_argument("--video-id", required=True)
     args = parser.parse_args()
     root = ROOT / "workspace/ocr_fullres" / args.video_id

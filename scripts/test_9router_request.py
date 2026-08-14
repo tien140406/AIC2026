@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import sys
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -39,7 +40,7 @@ def main() -> None:
         "NINEROUTER_CHAT_URL", "https://router.studev.net/v1/chat/completions"))
     parser.add_argument("--model", default=os.getenv(
         "NINEROUTER_MODEL", "ag/gemini-3-flash"))
-    parser.add_argument("--max-tokens", type=int, default=2048)
+    parser.add_argument("--max-tokens", type=int, default=64000)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--json-object", action="store_true",
@@ -88,8 +89,10 @@ def main() -> None:
     }, ensure_ascii=False, indent=2), flush=True)
 
     try:
+        started = time.perf_counter()
         with urlopen(request, timeout=args.timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
+        latency_seconds = time.perf_counter() - started
     except HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
         print(json.dumps({"http_status": exc.code, "error": error_body},
@@ -100,7 +103,8 @@ def main() -> None:
               file=sys.stderr)
         raise SystemExit(1) from exc
 
-    print(json.dumps({"response": payload}, ensure_ascii=False, indent=2))
+    print(json.dumps({"latency_seconds": round(latency_seconds, 6),
+                      "response": payload}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

@@ -20,10 +20,10 @@ from rapidfuzz import fuzz
 from transformers import AutoModel, AutoModelForSequenceClassification, AutoProcessor, AutoTokenizer, CLIPModel
 
 from .query_understanding import build_query_plan
-from .query_transformer import LocalQueryTransformer
+from .query_transformer import GeminiQueryTransformer
+from .qwen_embeddings import QWEN3_MODEL_DIR, last_token_pool, load_qwen3, query_prompt
 from .object_spatial import structured_object_scores
 from .fusion_profiles import accepted_profile
-from .gemini_text_retrieval import GeminiTextServices
 from .retrieval_fusion import aggregate_scene_scores, field_coverage, robust_unit
 from .submission import build_ranked_submissions
 from .task_router import route_query
@@ -40,12 +40,12 @@ def char_ngrams(text: str, size: int = 3) -> list[str]:
 def intent_weights(intent: str) -> dict[str, float]:
     if intent == "ocr":
         return {"visual": 1.0, "openclip": 0.5, "lexical": 1.5, "fuzzy": 1.5,
-                "semantic": 1.0, "text_first": 1.25, "object": 0.5, "reranker": 2.0}
+                "semantic": 1.0, "object": 0.5, "reranker": 2.0}
     if intent == "asr":
         return {"visual": 0.75, "openclip": 0.25, "lexical": 1.75, "fuzzy": 0.5,
-                "semantic": 1.5, "text_first": 1.5, "object": 0.25, "reranker": 2.0}
+                "semantic": 1.5, "object": 0.25, "reranker": 2.0}
     return {"visual": 2.0, "openclip": 0.75, "lexical": 0.25, "fuzzy": 0.25,
-            "semantic": 0.75, "text_first": 1.0, "object": 1.25, "reranker": 1.0}
+            "semantic": 0.75, "object": 1.25, "reranker": 1.0}
 
 
 class OfflineSearchEngine:
@@ -64,17 +64,12 @@ class OfflineSearchEngine:
             raise ValueError("OpenCLIP metadata/vector count mismatch")
         self.openclip_processor = None
         self.openclip = None
-        self.text_vectors = np.load(self.index / "text_embeddings_bge_m3.npy", mmap_mode="r")
-        gemini_vectors = self.index / "text_embeddings_gemini.npy"
-        self.gemini_text_vectors = np.load(gemini_vectors, mmap_mode="r") if gemini_vectors.exists() else None
-        if self.gemini_text_vectors is not None and len(self.gemini_text_vectors) != len(self.scenes):
-            raise ValueError("Gemini text metadata/vector count mismatch")
-        self.gemini_text_services: GeminiTextServices | bool | None = None
+        self.text_vectors = np.load(self.index / "text_embeddings_qwen3.npy", mmap_mode="r")
         self._exact_ocr_cache: dict[str, dict[int, int]] = {}
-        self.query_transformer = LocalQueryTransformer(self.root, self.index)
+        self.query_transformer = GeminiQueryTransformer(self.root, self.index)
         self.field_text_vectors = {}
         for field in ("summary", "asr", "ocr_entities"):
-            path = self.index / f"text_embeddings_bge_m3_{field}.npy"
+            path = self.index / f"text_embeddings_qwen3_{field}.npy"
             if path.exists():
                 values = np.load(path, mmap_mode="r")
                 if len(values) != len(self.scenes):
@@ -87,9 +82,10 @@ class OfflineSearchEngine:
         siglip_id = str(siglip) if siglip.exists() else "google/siglip2-so400m-patch14-384"
         self.siglip_processor = AutoProcessor.from_pretrained(siglip_id, local_files_only=True, use_fast=False)
         self.siglip = AutoModel.from_pretrained(siglip_id, dtype=self.dtype, local_files_only=True).to(self.device).eval()
-        bge = self.root / "models" / "bge-m3"
-        self.bge_tokenizer = AutoTokenizer.from_pretrained(str(bge), local_files_only=True)
-        self.bge = AutoModel.from_pretrained(str(bge), dtype=self.dtype, local_files_only=True).to(self.device).eval()
+        qwen3 = self.root / "models" / QWEN3_MODEL_DIR
+        self.qwen3_tokenizer, self.qwen3 = load_qwen3(
+            qwen3, self.device, self.dtype
+        )
         reranker = self.root / "models" / "bge-reranker-v2-m3"
         self.reranker_tokenizer = AutoTokenizer.from_pretrained(str(reranker), local_files_only=True)
         self.reranker = AutoModelForSequenceClassification.from_pretrained(
@@ -177,14 +173,18 @@ class OfflineSearchEngine:
             top_frames.append(selected)
         return scores, best_frames, top_frames
 
-    def _bge_scores(self, query: str) -> tuple[np.ndarray, dict[str, np.ndarray]]:
-        inputs = self.bge_tokenizer([query], padding=True, truncation=True, max_length=512,
-                                    return_tensors="pt").to(self.device)
+    def _qwen3_scores(self, queries: list[str]) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+        prompted = [query_prompt(query) for query in queries if query.strip()]
+        inputs = self.qwen3_tokenizer(
+            prompted, padding=True, truncation=True, max_length=512,
+            return_tensors="pt",
+        ).to(self.device)
         with torch.inference_mode():
-            vector = self.bge(**inputs).last_hidden_state[:, 0].float()
-            vector = torch.nn.functional.normalize(vector, dim=-1).cpu().numpy()[0]
-        primary = np.asarray(self.text_vectors @ vector, dtype=np.float32)
-        fields = {name: np.asarray(values @ vector, dtype=np.float32)
+            hidden = self.qwen3(**inputs).last_hidden_state
+            vectors = last_token_pool(hidden, inputs["attention_mask"]).float()
+            vectors = torch.nn.functional.normalize(vectors, dim=-1).cpu().numpy()
+        primary = np.asarray((self.text_vectors @ vectors.T).max(axis=1), dtype=np.float32)
+        fields = {name: np.asarray((values @ vectors.T).max(axis=1), dtype=np.float32)
                   for name, values in self.field_text_vectors.items()}
         return primary, fields
 
@@ -196,7 +196,7 @@ class OfflineSearchEngine:
             self.openclip_processor = AutoProcessor.from_pretrained(
                 str(model_dir), local_files_only=True, use_fast=False)
             # Keep the independent model on CPU: the 8 GB GPU already hosts
-            # SigLIP, BGE-M3 and the reranker. Text-only inference is small.
+            # SigLIP, Qwen3 Embedding and the reranker. Text-only inference is small.
             self.openclip = CLIPModel.from_pretrained(str(model_dir), local_files_only=True).eval()
         inputs = self.openclip_processor(text=variants, padding=True, truncation=True,
                                          max_length=77, return_tensors="pt")
@@ -224,7 +224,6 @@ class OfflineSearchEngine:
                fusion_mode: str = "rrf", field_aware: bool = False,
                openclip: bool = False, visual_pooling: str = "max",
                calibrate_openclip: bool = False, reranker_fusion: str = "rank",
-               online_gemini_text: bool = False,
                query_transformer: bool = True) -> dict[str, Any]:
         if not query.strip() or top_k <= 0:
             raise ValueError("query must be non-empty and top_k positive")
@@ -243,30 +242,13 @@ class OfflineSearchEngine:
             weights = intent_weights(plan.intent)
             timings["query_plan"] = time.perf_counter() - stage_started
             variants = list(plan.variants)
-            expansion = None
-            text_first_scores = None
-            stage_started = time.perf_counter()
-            if online_gemini_text and self.gemini_text_vectors is not None and task.task == "KIS":
-                try:
-                    if self.gemini_text_services is None:
-                        self.gemini_text_services = GeminiTextServices(self.root, self.index)
-                    if isinstance(self.gemini_text_services, GeminiTextServices):
-                        expansion = self.gemini_text_services.expand(plan.normalized)
-                        variants.extend([expansion.english_translation, *expansion.visual_queries,
-                                         " ".join(expansion.keywords_en)])
-                        query_vector = self.gemini_text_services.embed_query(
-                            plan.normalized, int(self.gemini_text_vectors.shape[1]))
-                        text_first_scores = np.asarray(self.gemini_text_vectors @ query_vector, dtype=np.float32)
-                except Exception:
-                    self.gemini_text_services = False
-            timings["gemini_text"] = time.perf_counter() - stage_started
             variants = list(dict.fromkeys(value.strip() for value in variants if value.strip()))
             stage_started = time.perf_counter()
             visual, best_frames, top_frames = self._siglip_scores(variants, visual_pooling)
             timings["siglip"] = time.perf_counter() - stage_started
             stage_started = time.perf_counter()
-            semantic, semantic_fields = self._bge_scores(plan.normalized)
-            timings["bge"] = time.perf_counter() - stage_started
+            semantic, semantic_fields = self._qwen3_scores(variants)
+            timings["qwen3_embedding"] = time.perf_counter() - stage_started
             stage_started = time.perf_counter()
             openclip_scores = self._openclip_scores(variants, visual_pooling) if openclip else None
             timings["openclip"] = time.perf_counter() - stage_started
@@ -320,8 +302,6 @@ class OfflineSearchEngine:
                 object_order = np.argsort(-object_scores)
                 orders["object"] = [int(row) for row in object_order
                                     if object_scores[row] > 0][:candidate_k]
-            if text_first_scores is not None:
-                orders["text_first"] = np.argsort(-text_first_scores)[:candidate_k].tolist()
             fused: dict[int, float] = {}
             for branch, order in orders.items():
                 for rank, row in enumerate(order, 1):
@@ -336,7 +316,6 @@ class OfflineSearchEngine:
             if fusion_mode == "normalized":
                 visual_unit, semantic_unit = robust_unit(visual), robust_unit(semantic)
                 openclip_unit = robust_unit(openclip_scores) if openclip_scores is not None else None
-                text_first_unit = robust_unit(text_first_scores) if text_first_scores is not None else None
                 for row in fused:
                     coverage, fields = field_coverage(plan.normalized, self.scenes.iloc[row], plan.intent)
                     coverage_scores[row], coverage_fields[row] = coverage, fields
@@ -349,8 +328,6 @@ class OfflineSearchEngine:
                         fused[row] += 0.006 * weights["openclip"] * float(openclip_unit[row])
                     if object_constraints:
                         fused[row] += 0.015 * weights["object"] * float(object_scores[row])
-                    if text_first_unit is not None:
-                        fused[row] += 0.008 * weights["text_first"] * float(text_first_unit[row])
                     if row in exact_ocr_frames:
                         fused[row] += 0.08
             preliminary = sorted(fused, key=fused.get, reverse=True)[:rerank_k]
@@ -407,8 +384,6 @@ class OfflineSearchEngine:
                                 "object_spatial_score": (float(object_scores[row_id])
                                                          if object_constraints else None),
                                 "profile_score": profile_scores.get(row_id),
-                                "text_first_score": (float(text_first_scores[row_id])
-                                                     if text_first_scores is not None else None),
                                 "semantic_field_scores": {name: float(values[row_id])
                                                           for name, values in semantic_fields.items()},
                                 "field_coverage_score": coverage_scores.get(row_id),
@@ -439,11 +414,10 @@ class OfflineSearchEngine:
                     "exact_ocr_evidence": [{"scene_row": row, "frame_id": frame}
                                            for row, frame in exact_ocr_frames.items()],
                     "retrieval_profile": profile.kind if profile else None,
-                    "query_expansion": expansion.model_dump() if expansion else None,
                     "query_transformer_requested": query_transformer,
                     "query_transformer_available": self.query_transformer.available,
+                    "query_transformer_model": self.query_transformer.model,
                     "query_transformer_error": transformer_error,
-                    "online_gemini_text": online_gemini_text,
                     "timings": {name: round(value, 4) for name, value in timings.items()},
                     "reranker_used": use_reranker, "results": results, "submissions": submissions,
                     "requires_temporal_alignment": task.task == "TRAKE"}
@@ -452,8 +426,9 @@ class OfflineSearchEngine:
         return {"status": "ok", "device": str(self.device), "scenes": len(self.scenes),
                 "frames": len(self.frames), "image_dimension": int(self.image_vectors.shape[1]),
                 "text_dimension": int(self.text_vectors.shape[1]),
+                "text_embedding_model": "Qwen/Qwen3-Embedding-0.6B",
                 "semantic_fields": sorted(self.field_text_vectors),
-                "gemini_text_available": self.gemini_text_vectors is not None,
                 "openclip_available": self.openclip_vectors is not None,
                 "query_transformer_available": self.query_transformer.available,
+                "query_transformer_model": self.query_transformer.model,
                 "cuda_memory_allocated": int(torch.cuda.memory_allocated()) if self.device.type == "cuda" else 0}

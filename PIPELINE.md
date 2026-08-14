@@ -14,10 +14,10 @@ Video dataset
   -> 1-2 medoid mỗi chunk + redundancy elimination
   -> coverage audit 103 frames + fallback ở cửa sổ trống
   -> SigLIP2 SO400M final visual embeddings
-  -> ASR + OCR + object evidence + Gemini scene enrichment
+  -> ASR + OCR + object evidence + scene enrichment qua 9Router
   -> semantic scenes và OCR-to-frame mapping
   -> multimodal offline index
-  -> query transformer
+  -> Gemini query expansion khi người dùng query
   -> hybrid retrieval và fusion
   -> task-specific QA / KIS / TRAKE output
 ```
@@ -52,12 +52,12 @@ Thiết kế này tránh hai cực đoan: chỉ giữ một medoid khiến mất
 ### ASR
 
 - Faster-Whisper large-v3, CUDA FP16 khi có GPU.
-- Gemini normalization chỉ dùng có điều kiện cho transcript nhiễu; không thay thế transcript gốc.
+- Gemini normalization chỉ dùng có điều kiện cho transcript nhiễu; không thay thế transcript gốc. Request batch được chạy resumable qua 9Router.
 
 ### OCR
 
 - PP-OCR cho local/full-resolution OCR.
-- Gemini crop OCR là fallback cho chữ khó hoặc nhỏ.
+- Gemini crop OCR là fallback cho chữ khó hoặc nhỏ; batch crop chạy resumable qua 9Router.
 - Watermark, timestamp và lower-third lặp lại được lọc trước indexing.
 - Index giữ `ocr_evidence_json`, ánh xạ từng chuỗi OCR về đúng `frame_id`. Đây là bắt buộc cho câu hỏi đọc biển, tên cây, mã số và tiêu đề sách.
 
@@ -88,7 +88,7 @@ Local storage:
 - Parquet cho metadata;
 - NumPy arrays cho embeddings;
 - SQLite FTS5 cho lexical/fuzzy search;
-- cache SQLite cho Query Transformer/Gemini text.
+- cache SQLite cho Gemini query expansion online.
 
 Production trên Vast.ai có thể đẩy vectors và scalar metadata sang Milvus. `video_id`, `scene_index`, `frame_id`, timestamps và đường dẫn media vẫn là khóa chuẩn.
 
@@ -96,13 +96,19 @@ Build index cục bộ:
 
 ```cmd
 uv run --project environments/siglip2 python scripts/build_offline_hybrid_index.py --output workspace/offline_index
-uv run --project environments/siglip2 python scripts/build_bge_m3_scene_index.py --documents workspace/offline_index/scenes.parquet --output workspace/offline_index --batch-size 16
+uv run --project environments/siglip2 python scripts/build_qwen3_scene_index.py --documents workspace/offline_index/scenes.parquet --output workspace/offline_index --batch-size 2 --max-length 2048
 uv run --project environments/siglip2 python scripts/build_openclip_frame_index.py --index workspace/offline_index
 ```
 
 ## 6. Query understanding
 
-Query Transformer local chuẩn hóa tiếng Việt/Anh, phát hiện task, answer target, object/spatial constraints và sinh query variants. Nó không trực tiếp xem video và không được phép tạo đáp án.
+Các rule local phát hiện task, answer target và object/spatial constraints. Sau khi
+người dùng gửi query, Gemini API trực tiếp dịch và sinh query variants. Kết quả
+được cache trong index; Gemini không được phép tạo đáp án ở bước retrieval.
+
+`GEMINI_API_KEY` chỉ được đọc ở query expansion và QA/VQA. Qwen3 Embedding chạy
+local cho cả scene documents offline lẫn câu query online, vì hai phía phải dùng
+cùng một embedding space.
 
 Các answer type quan trọng gồm visible text, clock/time, count, color, object, motion và named entity. Với `named_entity` như “cây nào”, pipeline ưu tiên scene có tên thực thể thật trong OCR thay vì để VLM suy đoán bằng kiến thức ngoài.
 
@@ -112,7 +118,7 @@ Các nhánh retrieval:
 
 1. SigLIP2 visual-text similarity.
 2. OpenCLIP ensemble nếu khả dụng.
-3. BGE-M3 trên retrieval text, summary, ASR và OCR/entities.
+3. Qwen3-Embedding-0.6B trên retrieval text, summary, ASR và OCR/entities.
 4. SQLite FTS5/BM25-like lexical retrieval.
 5. Character n-grams và RapidFuzz.
 6. Object/spatial constraints.
@@ -146,7 +152,7 @@ Nguyên tắc QA:
 - Exact text dùng nhiều frame phân bố theo thời gian và scene lân cận.
 - Tên thực thể phải được grounded trong OCR/ASR/caption.
 - Refinement không được thay đáp án có confidence bằng hoặc cao hơn bằng một chi tiết lân cận không đúng ngữ cảnh.
-- Nếu index không có OpenCLIP, server tự fallback sang SigLIP2/BGE-M3.
+- Nếu index không có OpenCLIP, server tự fallback sang SigLIP2/Qwen3.
 
 ### TRAKE
 
@@ -163,10 +169,24 @@ siglip-so400m-final
 asr-large-v3
 semantic-scenes
 objects-yoloworld
-gemini-batch-prepare/parse
+gemini-batch-prepare/run/parse (9Router)
 fullres-ocr
-ASR/OCR normalization khi cần
+ASR/OCR normalization khi cần (9Router)
 global index build
+```
+
+Toàn bộ các stage trên là offline: chúng không được đọc `GEMINI_API_KEY`.
+Các request scene/ASR/OCR dùng `NINEROUTER_*`; embedding text dùng Qwen3 local.
+
+Các lệnh `submit` chạy trực tiếp, đồng thời và resumable qua 9Router; output vẫn
+là `responses.jsonl` để các parser hiện có dùng nguyên format:
+
+```cmd
+uv run --project environments/siglip2 python scripts/gemini_batch_scenes.py submit --video-id L21_V001
+uv run --project environments/gemini python scripts/gemini_batch_generic.py register --task asr-normalize --video-id L21_V001
+uv run --project environments/gemini python scripts/gemini_batch_generic.py submit --task asr-normalize --video-id L21_V001
+uv run --project environments/gemini python scripts/gemini_batch_generic.py register --task ocr-crops --video-id L21_V001
+uv run --project environments/gemini python scripts/gemini_batch_generic.py submit --task ocr-crops --video-id L21_V001
 ```
 
 Không rebuild toàn dataset chỉ để thêm một video đã có final embeddings và semantic scenes; build một index mới từ artifact có sẵn thường chỉ mất vài phút.
@@ -184,7 +204,9 @@ R@K chỉ cho biết scene đúng có nằm trong K kết quả đầu hay khôn
 
 ## 11. Index kiểm thử hiện tại
 
-`workspace/offline_index_queries10` chứa 10 video QA kiểm thử, 659 scenes và 3.663 visual frame embeddings. Index này dùng SigLIP2 SO400M + BGE-M3; chưa có OpenCLIP nhưng server tự fallback.
+Các index cũ có file `text_embeddings_bge_m3*.npy` phải được rebuild bằng
+`scripts/build_qwen3_scene_index.py` trước khi chạy server mới. Visual embeddings,
+Parquet và SQLite index không cần build lại.
 
 Regression đã xác nhận:
 

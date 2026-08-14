@@ -80,8 +80,8 @@ def temporally_diverse_budget(
     return sorted(selected, key=lambda item: item["shot_id"])
 
 
-def run_shot(video_id: str, shot_id: int, model: str, max_images: int, retries: int) -> dict:
-    command = [
+def scene_command(video_id: str, shot_id: int, max_images: int) -> list[str]:
+    return [
         sys.executable,
         str(SCENE_SCRIPT),
         "--video-id",
@@ -90,9 +90,11 @@ def run_shot(video_id: str, shot_id: int, model: str, max_images: int, retries: 
         str(shot_id),
         "--max-images",
         str(max_images),
-        "--model",
-        model,
     ]
+
+
+def run_shot(video_id: str, shot_id: int, max_images: int, retries: int) -> dict:
+    command = scene_command(video_id, shot_id, max_images)
     last_error = ""
     for attempt in range(retries + 1):
         process = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
@@ -109,7 +111,6 @@ def run_shot(video_id: str, shot_id: int, model: str, max_images: int, retries: 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Budgeted, resumable Gemini scene processing.")
     parser.add_argument("--video-id", default="L21_V001")
-    parser.add_argument("--model", default="gemini-3.5-flash-lite")
     parser.add_argument(
         "--max-shots",
         type=int,
@@ -152,7 +153,6 @@ def main() -> None:
                 run_shot,
                 args.video_id,
                 item["shot_id"],
-                args.model,
                 args.max_images,
                 args.retries,
             ): item["shot_id"]
@@ -167,7 +167,7 @@ def main() -> None:
     report["completed"] = sum(item["status"] == "completed" for item in results)
     report["failed"] = sum(item["status"] == "failed" for item in results)
     report["total_tokens"] = sum(
-        (item.get("usage") or {}).get("total_token_count", 0)
+        (item.get("usage") or {}).get("total_tokens", 0)
         for item in results
     )
     report_path = result_dir / "batch_report.json"

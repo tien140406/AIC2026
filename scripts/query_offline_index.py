@@ -34,6 +34,8 @@ def main() -> None:
     parser.add_argument("--visual-pooling", choices=("max", "top3_mean", "max_top3"), default="max")
     parser.add_argument("--calibrate-openclip", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--reranker-fusion", choices=("rank", "score", "hybrid", "auto"), default="auto")
+    parser.add_argument("--query-transformer", action=argparse.BooleanOptionalAction,
+                        default=True)
     parser.add_argument("--device")
     args = parser.parse_args()
     engine = OfflineSearchEngine(ROOT, args.index, args.device)
@@ -46,6 +48,7 @@ def main() -> None:
         fusion_mode=args.fusion_mode, field_aware=args.field_aware,
         openclip=args.openclip, visual_pooling=args.visual_pooling,
         calibrate_openclip=calibrate_openclip, reranker_fusion=args.reranker_fusion,
+        query_transformer=args.query_transformer,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

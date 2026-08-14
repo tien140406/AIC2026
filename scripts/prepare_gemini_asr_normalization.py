@@ -22,7 +22,7 @@ def suspicious(segment: dict) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare conditional Gemini Batch ASR normalization.")
+    parser = argparse.ArgumentParser(description="Prepare conditional 9Router ASR normalization.")
     parser.add_argument("--video-id", required=True)
     parser.add_argument("--context-segments", type=int, default=1)
     args = parser.parse_args()

@@ -38,7 +38,7 @@ def normalize(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Parse downloaded Gemini Batch JSONL into validated scene records.")
+    parser = argparse.ArgumentParser(description="Parse 9Router batch JSONL into validated scene records.")
     parser.add_argument("--video-id", required=True)
     parser.add_argument("--input", type=Path)
     parser.add_argument("--output", type=Path)
@@ -56,7 +56,7 @@ def main() -> None:
                 raise ValueError("missing or duplicate key")
             description = normalize(json.loads(response_text(envelope)))
             parsed.append({"scene_id": key, "video_id": args.video_id, "description": description,
-                           "provenance": {"source": "gemini_batch", "input": str(source), "line": line_number}})
+                           "provenance": {"source": "9router_batch", "input": str(source), "line": line_number}})
             seen.add(key)
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             errors.append({"line": line_number, "error": str(exc)})

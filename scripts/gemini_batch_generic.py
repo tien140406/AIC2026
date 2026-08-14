@@ -3,13 +3,17 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sqlite3
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "workspace/gemini_batches/generic_jobs.sqlite3"
+sys.path.insert(0, str(ROOT))
+
+from aic_pipeline.router_batch import router_batch_status, run_router_batch
+from aic_pipeline.router_chat import RouterChatClient
 
 
 def now() -> str:
@@ -25,15 +29,6 @@ def connect() -> sqlite3.Connection:
       uploaded_name TEXT, job_name TEXT, state TEXT, result_name TEXT, output_path TEXT,
       created_at TEXT, updated_at TEXT, error TEXT)""")
     return db
-
-
-def api_client():
-    from dotenv import load_dotenv
-    from google import genai
-    load_dotenv(ROOT / ".env")
-    if not os.getenv("GEMINI_API_KEY"):
-        raise RuntimeError("GEMINI_API_KEY is not configured")
-    return genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
 def paths(task: str, video_id: str) -> tuple[Path, Path]:
@@ -55,12 +50,16 @@ def latest(db: sqlite3.Connection, task: str, video_id: str) -> sqlite3.Row:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Resumable Gemini Batch manager for prepared auxiliary tasks.")
+    parser = argparse.ArgumentParser(description="Resumable 9Router runner for prepared auxiliary tasks.")
     parser.add_argument("command", choices=("register", "submit", "status", "download"))
     parser.add_argument("--task", choices=("asr-normalize", "ocr-crops"), required=True)
     parser.add_argument("--video-id", required=True)
-    parser.add_argument("--model", default="gemini-3.6-flash")
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--max-retries", type=int, default=3)
+    parser.add_argument("--timeout", type=float, default=120)
+    parser.add_argument("--max-tokens", type=int, default=64000)
     args = parser.parse_args()
+    args.model = RouterChatClient(ROOT).model
     input_path, output_path = paths(args.task, args.video_id)
     with connect() as db:
         if args.command == "register":
@@ -70,38 +69,42 @@ def main() -> None:
                                   "requests": 0, "status": "nothing_to_submit"}, indent=2))
                 return
             digest = hashlib.sha256(payload).hexdigest()
-            db.execute("""INSERT OR IGNORE INTO jobs(task,video_id,input_hash,model,input_path,state,
-                output_path,created_at,updated_at) VALUES(?,?,?,?,?,'PREPARED',?,?,?)""",
+            db.execute("""INSERT INTO jobs(task,video_id,input_hash,model,input_path,state,
+                output_path,created_at,updated_at) VALUES(?,?,?,?,?,'PREPARED',?,?,?)
+                ON CONFLICT(input_hash) DO UPDATE SET model=excluded.model,input_path=excluded.input_path,
+                output_path=excluded.output_path,uploaded_name=NULL,job_name=NULL,state='PREPARED',
+                result_name=NULL,error=NULL,updated_at=excluded.updated_at""",
                 (args.task, args.video_id, digest, args.model, str(input_path), str(output_path), now(), now()))
             print(json.dumps({"task": args.task, "video_id": args.video_id, "requests": len(payload.splitlines()),
                               "sha256": digest, "input": str(input_path)}, indent=2)); return
         row = latest(db, args.task, args.video_id)
-        client = api_client()
         if args.command == "submit":
-            if row["job_name"]:
-                print(json.dumps({"job": row["job_name"], "state": row["state"]})); return
-            from google.genai import types
-            uploaded = client.files.upload(file=row["input_path"], config=types.UploadFileConfig(
-                display_name=f"aic-{args.task}-{args.video_id}-{row['input_hash'][:10]}", mime_type="jsonl"))
-            job = client.batches.create(model=args.model, src=uploaded.name,
-                config={"display_name": f"aic-{args.task}-{args.video_id}"})
-            state = str(getattr(job.state, "name", job.state)).removeprefix("JobState.")
-            db.execute("UPDATE jobs SET uploaded_name=?,job_name=?,state=?,updated_at=? WHERE input_hash=?",
-                       (uploaded.name, job.name, state, now(), row["input_hash"]))
-            print(json.dumps({"job": job.name, "state": state}, indent=2)); return
-        if not row["job_name"]:
-            raise ValueError("Batch has not been submitted")
-        job = client.batches.get(name=row["job_name"])
-        state = str(getattr(job.state, "name", job.state)).removeprefix("JobState.")
-        result = getattr(getattr(job, "dest", None), "file_name", None)
-        db.execute("UPDATE jobs SET state=?,result_name=?,updated_at=? WHERE input_hash=?",
-                   (state, result, now(), row["input_hash"]))
-        if args.command == "download":
-            if state != "JOB_STATE_SUCCEEDED" or not result:
-                raise RuntimeError(f"Batch is not ready: {state}")
-            output_path.write_bytes(client.files.download(file=result))
-        print(json.dumps({"job": row["job_name"], "state": state, "result": result,
-                          "output": str(output_path) if args.command == "download" else None}, indent=2))
+            report = run_router_batch(
+                ROOT, Path(row["input_path"]), output_path,
+                workers=args.workers, max_retries=args.max_retries,
+                timeout_seconds=args.timeout, default_max_tokens=args.max_tokens,
+                progress=lambda result: print(json.dumps({
+                    "key": result["key"], "ok": "response" in result,
+                    "latency_seconds": (result.get("router") or {}).get("latency_seconds"),
+                    "attempts": (result.get("router") or {}).get("attempts")},
+                    ensure_ascii=False), flush=True),
+            )
+            state = "SUCCEEDED" if report["failed"] == 0 else "PARTIAL_FAILURE"
+            error = None if report["failed"] == 0 else f"{report['failed']} requests failed"
+            job = f"9router:{row['input_hash'][:10]}"
+            db.execute("""UPDATE jobs SET uploaded_name=NULL,job_name=?,state=?,result_name=?,
+                updated_at=?,error=? WHERE input_hash=?""",
+                       (job, state, str(output_path), now(), error, row["input_hash"]))
+            print(json.dumps({"job": job, "state": state, **report}, ensure_ascii=False, indent=2))
+            if report["failed"]:
+                raise RuntimeError(error)
+            return
+        counts = router_batch_status(Path(row["input_path"]), output_path)
+        state = "SUCCEEDED" if counts["requests"] == counts["succeeded"] else row["state"]
+        if args.command == "download" and state != "SUCCEEDED":
+            raise RuntimeError(f"Batch is not ready: {state}")
+        print(json.dumps({"job": row["job_name"], "state": state,
+                          "model": row["model"], "result": str(output_path), **counts}, indent=2))
 
 
 if __name__ == "__main__":

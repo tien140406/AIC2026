@@ -45,13 +45,11 @@ def main() -> None:
     warmup_seconds = 0.0
     if not args.no_warmup:
         warmup_started = time.perf_counter()
-        if engine.query_transformer.available:
-            # Pay Qwen/llama.cpp model startup once before the service reports
-            # ready; subsequent uncached query parses take about one second.
-            engine.query_transformer._start_server()
+        # Gemini expansion is intentionally not warmed up: it may only run
+        # after a user submits an online query.
         engine.search("người đang hoạt động", top_k=1, candidate_k=20, rerank_k=4,
                       field_aware=True, openclip=engine.openclip_vectors is not None,
-                      online_gemini_text=False, query_transformer=False)
+                      query_transformer=False)
         temporal_aligner[0] = TemporalAligner(ROOT, args.device)
         temporal_aligner[0]._event_vectors(["người bước đi", "người ngồi xuống"])
         warmup_seconds = time.perf_counter() - warmup_started
@@ -222,7 +220,6 @@ def main() -> None:
                             event, top_k=50, candidate_k=150, rerank_k=12,
                             fusion_mode="rrf", field_aware=True, openclip=False,
                             calibrate_openclip=False, reranker_fusion="rank",
-                            online_gemini_text=False,
                             query_transformer=bool(request.get("query_transformer", True))))
                     per_event = []
                     per_event_object = []
@@ -309,12 +306,12 @@ def main() -> None:
                                          candidate_k=int(request.get("candidate_k", 300)),
                                          rerank_k=int(request.get("rerank_k", 20)),
                                          fusion_mode=str(request.get("fusion_mode", "normalized")),
-                                         openclip=bool(request.get("openclip", True)),
+                                         openclip=(bool(request.get("openclip", False))
+                                                   and engine.openclip_vectors is not None),
                                          field_aware=bool(request.get("field_aware", True)),
                                          calibrate_openclip=bool(request.get(
                                              "calibrate_openclip", task.task == "KIS")),
                                          reranker_fusion=str(request.get("reranker_fusion", "auto")),
-                                         online_gemini_text=bool(request.get("online_gemini_text", False)),
                                          query_transformer=bool(request.get("query_transformer", True)))
                 if (task.task == "KIS" and response.get("results")
                         and bool(request.get("moment_refinement", False))):

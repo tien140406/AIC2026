@@ -80,7 +80,7 @@ def main() -> None:
                 fusion_mode="normalized", field_aware=True, openclip=True,
                 visual_pooling="max", calibrate_openclip=kind == "KIS",
                 reranker_fusion="auto")
-            output = {"route": response.get("task"), "query_expansion": response.get("query_expansion"),
+            output = {"route": response.get("task"),
                       "results": [compact_result(item) for item in response["results"]]}
         elapsed = time.perf_counter() - started
         rows.append({"query_id": path.stem, "query_type": kind, "query_text": text,

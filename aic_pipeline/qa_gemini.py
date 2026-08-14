@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -10,14 +11,31 @@ from typing import Any
 import cv2
 import pandas as pd
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
 from PIL import Image, ImageDraw, ImageOps
 from pydantic import BaseModel, Field
 
 from .object_grounding import GroundingDinoCropper
 from .qa_reasoning import answers_equivalent, classify_question, temporal_frame_ids
-from .router_chat import RouterChatClient
+from .gemini_online import GeminiOnlineClient
+
+
+QA_SYSTEM_PROMPT = """You are a visual question-answering judge.
+Answer using only evidence visibly present in the attached source video and retrieved keyframes.
+Ignore all transcripts, ASR, transcript-derived summaries, metadata, and outside knowledge.
+Text visibly rendered inside the video or a keyframe is valid visual evidence and may be read directly.
+Use the keyframes to locate the event, then inspect the video for temporal context and fine detail.
+If the visual evidence does not show the answer clearly, lower confidence instead of guessing.
+"""
+
+
+def _retryable_online_error(exc: Exception) -> bool:
+    """Retry transient transport errors and malformed structured responses."""
+    if isinstance(exc, ValueError):
+        return True
+    return any(code in str(exc) for code in (
+        "429", "503", "504", "RESOURCE_EXHAUSTED", "UNAVAILABLE",
+        "DEADLINE_EXCEEDED",
+    ))
 
 
 class QASelection(BaseModel):
@@ -81,14 +99,34 @@ def local_exact_ocr_answer(root: Path, question: str,
 
 class GeminiQAEngine:
     def __init__(self, root: Path, model: str | None = None,
-                 request_timeout_ms: int = 20_000) -> None:
+                 request_timeout_ms: int = 30_000,
+                 client: Any | None = None) -> None:
         self.root = root.resolve()
         load_dotenv(self.root / ".env")
-        self.client = RouterChatClient(self.root, request_timeout_ms / 1000)
-        self.model = model or self.client.model
+        selected_model = (model or getattr(client, "model", None)
+                          or os.getenv("GEMINI_QA_MODEL")
+                          or os.getenv("GEMINI_MODEL")
+                          or "gemini-3.5-flash")
+        self.client = client or GeminiOnlineClient(
+            self.root, selected_model, request_timeout_ms / 1000)
+        self.model = selected_model
         self.manifest = pd.read_parquet(self.root / "workspace" / "manifests" / "videos.parquet").set_index("video_id")
         self._grounder: GroundingDinoCropper | bool | None = None
         self._frame_cache: dict[tuple[str, int], Image.Image] = {}
+        self._video_url_cache: dict[str, str | None] = {}
+
+    def _video_url(self, video_id: str) -> str | None:
+        if video_id not in self._video_url_cache:
+            metadata_path = self.root / "archive" / "media-info" / f"{video_id}.json"
+            try:
+                value = str(json.loads(metadata_path.read_text(encoding="utf-8"))["watch_url"])
+                self._video_url_cache[video_id] = (
+                    value if value.startswith(("https://youtube.com/", "https://www.youtube.com/"))
+                    else None
+                )
+            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+                self._video_url_cache[video_id] = None
+        return self._video_url_cache[video_id]
 
     def _get_grounder(self) -> GroundingDinoCropper | None:
         if self._grounder is None:
@@ -220,9 +258,16 @@ class GeminiQAEngine:
         stage_started = time.perf_counter()
         sheet, mapping = self._sheet(candidates)
         timings["candidate_decode_sheet"] = time.perf_counter() - stage_started
-        prompt = f"""Answer this AIC visual question using only the candidate frames.
+        primary_video_id = str(candidates[0]["video_id"])
+        primary_video_url = self._video_url(primary_video_id)
+        primary_video_labels = [
+            label for label, item in mapping.items()
+            if str(item["video_id"]) == primary_video_id
+        ]
+        prompt = f"""Answer this AIC visual question using only the attached YouTube video and candidate keyframes.
 Question: {question}
 First select the single frame that best matches the described event, then answer the question from visible evidence.
+The attached YouTube video is the full source for candidates {', '.join(primary_video_labels)}.
 Question type: {reasoning.kind}. Specialized instruction: {reasoning.instruction}
 Rules:
 - candidate_label must be one of {', '.join(mapping)}.
@@ -238,15 +283,17 @@ Rules:
                 try:
                     response = self.client.json_response(
                         prompt, QASelection, sheet, model=model,
-                        temperature=0.1, max_tokens=1024)
+                        system_prompt=QA_SYSTEM_PROMPT,
+                        video_url=primary_video_url,
+                        temperature=0.1, max_tokens=4096)
                     used_model = model
                     break
                 except Exception as exc:
                     last_error = exc
-                    if not any(code in str(exc) for code in (
-                            "429", "503", "504", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "DEADLINE_EXCEEDED")):
+                    if not _retryable_online_error(exc):
                         raise
-                    time.sleep(3 * (attempt + 1))
+                    if not isinstance(exc, ValueError):
+                        time.sleep(3 * (attempt + 1))
             if response is not None:
                 break
         if response is None:
@@ -323,14 +370,27 @@ Rules:
             detail_prompt = f"""Answer the visual question from these high-resolution views of one scene.
 Question: {question}
 Question type: {reasoning.kind}. Specialized instruction: {reasoning.instruction}
+The attached YouTube video is the full source video for every candidate shown here.
 Select the clearest evidence frame. Read exact visible text carefully. Do not infer hidden facts.
 candidate_label must be one of {', '.join(detail_mapping)}. Keep the answer short.
 """
             stage_started = time.perf_counter()
             try:
-                detail_response = self.client.json_response(
-                    detail_prompt, QASelection, detail_sheet, model=used_model,
-                    temperature=0.0, max_tokens=1024)
+                detail_response = None
+                for attempt in range(2):
+                    try:
+                        detail_response = self.client.json_response(
+                            detail_prompt, QASelection, detail_sheet, model=used_model,
+                            system_prompt=QA_SYSTEM_PROMPT,
+                            video_url=self._video_url(str(candidate["video_id"])),
+                            temperature=0.0, max_tokens=4096)
+                        break
+                    except Exception as exc:
+                        if not _retryable_online_error(exc) or attempt == 1:
+                            raise
+                        if not isinstance(exc, ValueError):
+                            time.sleep(3 * (attempt + 1))
+                assert detail_response is not None
                 refined = QASelection.model_validate_json(detail_response.text)
                 refined_label = refined.candidate_label.strip().upper()
                 if refined_label in detail_mapping:

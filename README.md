@@ -10,7 +10,7 @@ Hệ thống xử lý video offline và truy vấn cho ba dạng bài AIC: KIS, 
 - SigLIP2 visual embeddings và OpenCLIP ensemble tùy chọn;
 - Faster-Whisper ASR, PP-OCR và Gemini enrichment;
 - semantic scenes, object/spatial metadata và OCR-to-frame evidence;
-- BGE-M3, lexical/fuzzy retrieval, cross-encoder reranking và fusion;
+- Qwen3 Embedding, lexical/fuzzy retrieval, BGE cross-encoder reranking và fusion;
 - QA bằng evidence frames, KIS ranking và TRAKE temporal alignment;
 - frontend localhost và định dạng submission top 100.
 
@@ -31,26 +31,43 @@ uv sync --project environments/gemini
 copy .env.example .env
 ```
 
-LLM online đi qua 9Router theo chuẩn OpenAI Chat Completions. Cấu hình trong
-`.env`:
+Pipeline tách provider theo thời điểm chạy. Mọi job tiền xử lý offline đi qua
+9Router theo chuẩn OpenAI Chat Completions:
 
 ```env
 NINEROUTER_CHAT_URL=https://router.studev.net/v1/chat/completions
 NINEROUTER_MODEL=ag/gemini-3-flash
+NINEROUTER_MAX_OUTPUT_TOKENS=64000
 NINEROUTER_KEY=
 ```
 
 `NINEROUTER_KEY` đang cố ý để trống theo cấu hình router hiện tại. Nếu server
 bật xác thực, tạo key tại 9Router Dashboard và điền vào biến này. Không commit
-`.env`. Các script `gemini_batch_*` và Gemini embedding là legacy, vẫn cần
-`GEMINI_API_KEY`; chúng không tương thích với endpoint Chat Completions.
+`.env`. Scene enrichment, ASR/OCR normalization và crop OCR batch đều chạy qua
+9Router, không đọc `GEMINI_API_KEY`.
+
+Khi người dùng gửi query, query expansion và QA/VQA gọi Gemini API trực tiếp:
+
+```env
+GEMINI_API_KEY=
+GEMINI_API_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+GEMINI_QUERY_MODEL=gemini-3.1-flash-lite
+GEMINI_QA_MODEL=gemini-3.5-flash
+```
+
+Text retrieval không dùng Gemini Embedding. Corpus và query được embed local
+bằng `Qwen/Qwen3-Embedding-0.6B`. Tải model một lần trước khi build index:
+
+```cmd
+uv run --project environments/siglip2 python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen3-Embedding-0.6B', local_dir='models/qwen3-embedding-0.6b')"
+```
 
 ## Chạy frontend
 
-Ví dụ với index kiểm thử 10 video:
+Ví dụ với index kiểm thử hiện có:
 
 ```cmd
-uv run --project environments/siglip2 python scripts/serve_offline_query.py --index workspace/offline_index_queries10
+uv run --project environments/siglip2 python scripts/serve_offline_query.py --index workspace/offline_index_first20_local
 ```
 
 Mở `http://127.0.0.1:8765`. Sau khi đổi code hoặc index, dừng server bằng `Ctrl+C` và chạy lại vì model/index được giữ trong RAM.
@@ -84,4 +101,3 @@ archive/        video dataset, không commit
 - Không dùng video ID ground truth để lọc khi benchmark end-to-end.
 - Không để Gemini trả lời nếu không có bằng chứng trong OCR, ASR hoặc frame.
 - Chỉ commit code, cấu hình, test và tài liệu; không commit dữ liệu hay secrets.
-

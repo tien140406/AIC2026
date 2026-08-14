@@ -68,7 +68,6 @@ def main() -> None:
     parser.add_argument("--video-id", default="L21_V001")
     parser.add_argument("--shot-id", type=int, default=27)
     parser.add_argument("--max-images", type=int, default=8)
-    parser.add_argument("--model")
     parser.add_argument(
         "--media-resolution", choices=("auto", "low", "medium", "high"), default="auto"
     )
@@ -98,28 +97,31 @@ Rules:
 """
 
     client = RouterChatClient(ROOT, timeout_seconds=120)
-    args.model = args.model or client.model
     with Image.open(sheet_path) as image:
         response = client.json_response(
-            prompt, SceneDescription, image.copy(), model=args.model,
+            prompt, SceneDescription, image.copy(),
             temperature=0.1, max_tokens=1024)
     parsed = SceneDescription.model_validate_json(response.text)
     usage = response.usage
     payload = {
         "video_id": args.video_id,
         "shot_id": args.shot_id,
-        "model": args.model,
+        "model": client.model,
         "media_resolution": args.media_resolution,
         "thinking_budget": args.thinking_budget,
         "contact_sheet": str(sheet_path),
         "frames": frames,
         "description": parsed.model_dump(),
         "usage": usage,
+        "latency_seconds": round(response.latency_seconds, 6),
     }
     output = ROOT / "workspace" / "gemini_smoke" / args.video_id / f"shot_{args.shot_id:06d}.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"output": str(output), "contact_sheet": str(sheet_path), "model": args.model, "usage": payload["usage"]}, ensure_ascii=False, indent=2))
+    print(json.dumps({"output": str(output), "contact_sheet": str(sheet_path),
+                      "model": client.model, "usage": payload["usage"],
+                      "latency_seconds": payload["latency_seconds"]},
+                     ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

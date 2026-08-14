@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from google.genai import types
 from pydantic import BaseModel, Field
 
 
@@ -16,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 from aic_pipeline.offline_search_engine import OfflineSearchEngine
 from aic_pipeline.qa_gemini import GeminiQAEngine, qa_grounding_query
+from aic_pipeline.router_chat import RouterChatClient
 
 
 class AcceptedEvidence(BaseModel):
@@ -34,11 +34,13 @@ def main() -> None:
     labels = pd.read_csv(args.labels)
     labels = labels.loc[labels.query_type.eq("QA")]
     engine = OfflineSearchEngine(ROOT, args.index)
-    qa = GeminiQAEngine(ROOT)
+    router = RouterChatClient(ROOT, timeout_seconds=120)
+    qa = GeminiQAEngine(ROOT, client=router)
     records = []
     for label in labels.itertuples(index=False):
         results = engine.search(qa_grounding_query(str(label.query_text_vi)),
-                                top_k=args.candidates, rerank_k=30)["results"]
+                                top_k=args.candidates, rerank_k=30,
+                                query_transformer=False)["results"]
         candidates = []
         for result in results:
             item = dict(result)
